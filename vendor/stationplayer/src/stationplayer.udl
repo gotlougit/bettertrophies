@@ -1,0 +1,206 @@
+namespace stationplayer {
+  string generate_sign_in_url(string? redirect_url);
+};
+
+[Error]
+enum StationPlayerError {
+  "Request",
+  "NotFound",
+  "Parse",
+  "MissingTitleServiceInfo",
+};
+
+dictionary Avatar {
+  string size;
+  string url;
+};
+
+dictionary PersonalInfo {
+  string first_name;
+  string last_name;
+};
+
+dictionary MyInfo {
+  string about_me;
+  sequence<Avatar> avatars;
+  boolean is_me;
+  boolean is_verified;
+  boolean is_plus;
+  sequence<string> languages;
+  string online_id;
+  PersonalInfo personal_detail;
+};
+
+dictionary RecentPlayedTitlesResponse {
+  RecentPlayedTitlesData data;
+};
+
+dictionary RecentPlayedTitlesData {
+  sequence<RecentPlayedTitle> recent_played_titles;
+};
+
+dictionary RecentPlayedTitle {
+  string typename;
+  CodexSummary codex_summary;
+  boolean has_help_content;
+  string id;
+  string np_title_id;
+  u32 play_time_hours;
+  u32? story_progress;
+  Title title;
+};
+
+dictionary CodexSummary {
+  string typename;
+  boolean has_codex;
+  boolean? has_new_entries;
+  u32? unlocked_codex_count;
+};
+
+dictionary Title {
+  string typename;
+  string concept_id;
+  sequence<Media> media;
+  string name;
+  string platform;
+};
+
+dictionary Media {
+  string typename;
+  string role;
+  string media_type;
+  string url;
+};
+
+dictionary TrophyDistributions {
+  u32 bronze;
+  u32 gold;
+  u32 platinum;
+  u32 silver;
+};
+
+dictionary UserGameTrophyInfo {
+  TrophyDistributions defined_trophies;
+  TrophyDistributions earned_trophies;
+  boolean trophy_groups;
+  boolean hidden_flag;
+  string last_updated;
+  string np_communication_id;
+  string np_service_name;
+  string? np_title_id;
+  u32 progress;
+  u32 trophy_group_count;
+  string trophy_set_version;
+  string trophy_title_icon;
+  string title;
+  string platform;
+};
+
+dictionary UserTrophySummary {
+  string account_id;
+  TrophyDistributions earned_trophies;
+  u32 progress;
+  u32 tier;
+  u32 trophy_level;
+  u32 trophy_level_base_point;
+  u32 trophy_level_next_point;
+  u32 trophy_point;
+};
+
+dictionary TrophyGroup {
+  TrophyDistributions? defined_trophies;
+  TrophyDistributions? earned_trophies;
+  string group_id;
+  string? group_name;
+  boolean? hidden_flag;
+  string? last_updated;
+  u32? progress;
+  string? trophy_group_icon_url;
+};
+
+dictionary TrophyGroupsResponse {
+  TrophyDistributions? defined_trophies;
+  TrophyDistributions? earned_trophies;
+  boolean? hidden_flag;
+  string? last_updated;
+  u32? progress;
+  sequence<TrophyGroup> groups;
+  string? trophy_set_version;
+};
+
+dictionary Trophy {
+  string trophy_id;
+  boolean? trophy_hidden;
+  string? trophy_icon_url;
+  string? trophy_name;
+  string? trophy_detail;
+  string? trophy_type;
+  boolean? earned;
+  string? earned_date_time;
+  string? progress;
+  u32? progress_rate;
+  string? progressed_date_time;
+  u32? rare;
+  u32? trophy_rare;
+  string? trophy_earned_rate;
+};
+
+dictionary TrophyDetail {
+  Trophy trophy;
+};
+
+dictionary TrophyAppearanceSetting {
+  boolean? is_set;
+  string? last_updated;
+  boolean? reveal_all_trophies;
+  u32? revision;
+  string? visibility;
+  boolean? can_display_all_trophies;
+};
+
+dictionary GraphQLError {
+  string message;
+};
+
+dictionary HintAvailabilityResponse {
+  string? data_json;
+  sequence<GraphQLError>? errors;
+};
+
+interface StationPlayer {
+  [Name=init, Throws=StationPlayerError]
+  constructor(string npsso);
+
+  [Throws=StationPlayerError]
+  MyInfo get_profile();
+
+  [Throws=StationPlayerError]
+  UserTrophySummary trophy_summary();
+
+  [Throws=StationPlayerError]
+  sequence<UserGameTrophyInfo> get_all_user_trophy_games();
+
+  [Throws=StationPlayerError]
+  sequence<Trophy> get_all_trophies_for_title_id(string title_id);
+
+  [Throws=StationPlayerError]
+  record<string, sequence<Trophy>> trophy_group_trophies_by_title_id(string title_id);
+
+  [Throws=StationPlayerError]
+  TrophyGroupsResponse trophy_groups(string np_communication_id, string? np_service_name);
+
+  [Throws=StationPlayerError]
+  sequence<Trophy> trophy_group_trophies(string np_communication_id, string group_id, string? np_service_name);
+
+  [Throws=StationPlayerError]
+  TrophyDetail trophy_detail(string np_communication_id, string trophy_id, string? np_service_name);
+
+  [Throws=StationPlayerError]
+  TrophyAppearanceSetting trophy_appearance_setting(string np_communication_id, string? np_service_name);
+
+  [Throws=StationPlayerError]
+  HintAvailabilityResponse trophy_hint_availability(string np_communication_id, sequence<string> trophy_ids);
+
+  [Throws=StationPlayerError]
+  RecentPlayedTitlesResponse recent_played_titles(u32? count);
+};

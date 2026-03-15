@@ -1,0 +1,31 @@
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDEs
+.idea/
+*.iml
+
+# Android / Gradle
+.gradle/
+.kotlin/
+local.properties
+build/
+app/build/
+app/.cxx/
+captures/
+
+# Generated Android/Rust integration outputs
+app/src/generated/java/
+app/src/main/jniLibs/
+target/
+
+# Nix / local dev shell state
+.direnv/
+result
+result-*
+.localcargo/
+.localzoxide/

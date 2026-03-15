@@ -1,0 +1,307 @@
+package dev.gotlou.bettertrophies
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dev.gotlou.bettertrophies.stationplayer.MyInfo
+import dev.gotlou.bettertrophies.stationplayer.RecentPlayedTitle
+import dev.gotlou.bettertrophies.stationplayer.StationPlayer
+import dev.gotlou.bettertrophies.stationplayer.Trophy
+import dev.gotlou.bettertrophies.stationplayer.TrophyDistributions
+import dev.gotlou.bettertrophies.stationplayer.UserGameTrophyInfo
+import dev.gotlou.bettertrophies.stationplayer.UserTrophySummary
+import dev.gotlou.bettertrophies.stationplayer.generateSignInUrl
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+
+data class MainUiState(
+    val npsso: String = "",
+    val signInUrl: String = "",
+    val dashboard: DashboardSnapshot? = null,
+    val trophies: List<TrophyEntry> = emptyList(),
+    val selectedTitleId: String? = null,
+    val selectedTitleName: String? = null,
+    val isLoading: Boolean = false,
+    val isLoadingTrophies: Boolean = false,
+    val error: String? = null,
+    val logLines: List<String> = emptyList(),
+)
+
+class MainViewModel : ViewModel() {
+    private val _state = MutableStateFlow(MainUiState())
+    val state: StateFlow<MainUiState> = _state.asStateFlow()
+
+    private var session: StationPlayer? = null
+    private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
+
+    init {
+        initializeStationPlayer()
+    }
+
+    fun updateNpsso(value: String) {
+        _state.update { it.copy(npsso = value, error = null) }
+    }
+
+    fun clearLogs() {
+        _state.update { it.copy(logLines = emptyList()) }
+    }
+
+    fun useSignInUrl() {
+        val signInUrl = state.value.signInUrl
+        appendLog(
+            if (signInUrl.isBlank()) {
+                "Sign-in URL requested before the native bindings were ready."
+            } else {
+                "Sign-in URL is available below the token field."
+            },
+        )
+        _state.update { state ->
+            state.copy(
+                error = if (signInUrl.isBlank()) {
+                    "Rust bindings are not loaded yet. Run ./scripts/generate-bindings.sh and ./scripts/build-android-libs.sh before building the app."
+                } else {
+                    null
+                },
+            )
+        }
+    }
+
+    fun connect() {
+        val token = state.value.npsso.trim()
+        if (token.isBlank()) {
+            appendLog("Connect blocked because the NPSSO field is empty.")
+            _state.update { it.copy(error = "Enter an NPSSO token.") }
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            _state.update {
+                it.copy(
+                    isLoading = true,
+                    dashboard = null,
+                    error = null,
+                    trophies = emptyList(),
+                    selectedTitleId = null,
+                    selectedTitleName = null,
+                )
+            }
+            appendLog("Loading native stationplayer library.")
+            try {
+                StationPlayerLoader.load()
+                appendLog("Creating StationPlayer session from the supplied NPSSO token.")
+                val activeSession = StationPlayer.init(token)
+
+                appendLog("Fetching profile.")
+                val profile = activeSession.getProfile()
+                appendLog("Fetching trophy summary.")
+                val summary = activeSession.trophySummary()
+                appendLog("Fetching all trophy titles.")
+                val trophyTitles = activeSession.getAllUserTrophyGames()
+                appendLog("Fetching recent titles.")
+                val recentTitles = activeSession.recentPlayedTitles(8u)
+
+                val dashboard = DashboardSnapshot(
+                    profile = mapProfile(profile),
+                    summary = mapSummary(summary),
+                    trophyTitles = trophyTitles.map(::mapGameTitle),
+                    recentTitles = recentTitles.data.recentPlayedTitles.map(::mapRecentTitle),
+                )
+                session = activeSession
+                appendLog(
+                    "Dashboard loaded with ${dashboard.trophyTitles.size} trophy titles and ${dashboard.recentTitles.size} recent titles.",
+                )
+                _state.update {
+                    it.copy(
+                        isLoading = false,
+                        dashboard = dashboard,
+                        selectedTitleId = null,
+                        selectedTitleName = null,
+                        trophies = emptyList(),
+                    )
+                }
+            } catch (error: Throwable) {
+                appendLog("Connect failed: ${formatThrowable(error)}")
+                _state.update {
+                    it.copy(
+                        isLoading = false,
+                        error = userFacingError(error, "Failed to connect."),
+                    )
+                }
+            }
+        }
+    }
+
+    fun loadTrophiesForTitle(titleId: String, titleName: String) {
+        val activeSession = session ?: run {
+            appendLog("Trophy load blocked because there is no active StationPlayer session.")
+            _state.update { it.copy(error = "Connect with an NPSSO token first.") }
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            _state.update {
+                it.copy(
+                    selectedTitleId = titleId,
+                    selectedTitleName = titleName,
+                    isLoadingTrophies = true,
+                    error = null,
+                )
+            }
+            appendLog("Loading trophies for $titleName ($titleId).")
+            try {
+                StationPlayerLoader.load()
+                val trophies = activeSession.getAllTrophiesForTitleId(titleId).map(::mapTrophy)
+                appendLog("Loaded ${trophies.size} trophies for $titleName.")
+                _state.update {
+                    it.copy(
+                        trophies = trophies,
+                        isLoadingTrophies = false,
+                    )
+                }
+            } catch (error: Throwable) {
+                appendLog("Trophy load failed for $titleName: ${formatThrowable(error)}")
+                _state.update {
+                    it.copy(
+                        isLoadingTrophies = false,
+                        error = userFacingError(error, "Failed to load trophies."),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun initializeStationPlayer() {
+        viewModelScope.launch(Dispatchers.IO) {
+            appendLog("Preparing stationplayer bindings.")
+            try {
+                StationPlayerLoader.load()
+                appendLog("Native stationplayer library loaded.")
+                val signInUrl = generateSignInUrl(null)
+                appendLog("Generated sign-in URL.")
+                _state.update { it.copy(signInUrl = signInUrl, error = null) }
+            } catch (error: Throwable) {
+                appendLog("StationPlayer initialization failed: ${formatThrowable(error)}")
+                _state.update {
+                    it.copy(
+                        error = "Rust bindings are not loaded yet. Run ./scripts/generate-bindings.sh and ./scripts/build-android-libs.sh before building the app.",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun appendLog(message: String) {
+        val timestamp = LocalTime.now().format(timeFormatter)
+        _state.update { current ->
+            current.copy(logLines = (current.logLines + "$timestamp  $message").takeLast(200))
+        }
+    }
+
+    private fun userFacingError(error: Throwable, fallback: String): String {
+        val detailed = formatThrowable(error)
+        return if (detailed.isBlank()) fallback else detailed
+    }
+
+    private fun formatThrowable(error: Throwable): String {
+        val chain = generateSequence(error) { it.cause }
+            .map { throwable ->
+                val typeName = throwable::class.simpleName ?: throwable.javaClass.simpleName
+                val message = throwable.message?.takeIf { it.isNotBlank() }
+                when {
+                    message == null -> typeName
+                    message.equals(typeName, ignoreCase = true) -> message
+                    else -> "$typeName: $message"
+                }
+            }
+            .distinct()
+            .toList()
+        return chain.joinToString(" -> ")
+    }
+
+    private fun mapProfile(profile: MyInfo): UserProfile {
+        return UserProfile(
+            onlineId = profile.onlineId,
+            firstName = profile.personalDetail.firstName.ifBlank { null },
+            lastName = profile.personalDetail.lastName.ifBlank { null },
+            aboutMe = profile.aboutMe.ifBlank { null },
+            isPlus = profile.isPlus,
+            isVerified = profile.isVerified,
+            languages = profile.languages,
+            avatarUrl = profile.avatars.firstOrNull()?.url,
+        )
+    }
+
+    private fun mapSummary(summary: UserTrophySummary): TrophySummaryRecord {
+        return TrophySummaryRecord(
+            trophyLevel = summary.trophyLevel.toInt(),
+            progress = summary.progress.toInt(),
+            tier = summary.tier.toInt(),
+            trophyPoints = summary.trophyPoint.toInt(),
+            earnedTrophies = mapTotals(summary.earnedTrophies),
+        )
+    }
+
+    private fun mapGameTitle(title: UserGameTrophyInfo): GameTitle {
+        return GameTitle(
+            titleId = title.npTitleId ?: title.npCommunicationId,
+            titleName = title.title,
+            platform = title.platform,
+            progress = title.progress.toInt(),
+            iconUrl = title.trophyTitleIcon,
+            lastUpdated = title.lastUpdated.ifBlank { null },
+            communicationId = title.npCommunicationId,
+            serviceName = title.npServiceName,
+            earnedTrophies = mapTotals(title.earnedTrophies),
+            definedTrophies = mapTotals(title.definedTrophies),
+        )
+    }
+
+    private fun mapRecentTitle(title: RecentPlayedTitle): RecentTitle {
+        val coverUrl = title.title.media.firstOrNull { media ->
+            media.role.equals("MASTER", ignoreCase = true)
+        }?.url ?: title.title.media.firstOrNull()?.url
+
+        return RecentTitle(
+            id = title.id,
+            npTitleId = title.npTitleId,
+            titleName = title.title.name,
+            platform = title.title.platform,
+            playTimeHours = title.playTimeHours.toInt(),
+            storyProgress = title.storyProgress?.toInt(),
+            coverUrl = coverUrl,
+            hasHelpContent = title.hasHelpContent,
+            hasCodex = title.codexSummary.hasCodex,
+        )
+    }
+
+    private fun mapTrophy(trophy: Trophy): TrophyEntry {
+        return TrophyEntry(
+            trophyId = trophy.trophyId,
+            name = trophy.trophyName,
+            detail = trophy.trophyDetail,
+            trophyType = trophy.trophyType,
+            iconUrl = trophy.trophyIconUrl,
+            hidden = trophy.trophyHidden,
+            earned = trophy.earned,
+            earnedAt = trophy.earnedDateTime,
+            progress = trophy.progress,
+            progressRate = trophy.progressRate?.toInt(),
+            rare = trophy.rare?.toInt(),
+            earnedRate = trophy.trophyEarnedRate,
+        )
+    }
+
+    private fun mapTotals(totals: TrophyDistributions): TrophyTotals {
+        return TrophyTotals(
+            bronze = totals.bronze.toInt(),
+            silver = totals.silver.toInt(),
+            gold = totals.gold.toInt(),
+            platinum = totals.platinum.toInt(),
+        )
+    }
+}

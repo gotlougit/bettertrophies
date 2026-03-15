@@ -1,0 +1,520 @@
+package dev.gotlou.bettertrophies
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
+import dev.gotlou.bettertrophies.ui.theme.BetterTrophiesTheme
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        setContent {
+            BetterTrophiesTheme {
+                val viewModel: MainViewModel = viewModel()
+                Surface(modifier = Modifier.fillMaxSize()) {
+                    BetterTrophiesScreen(viewModel = viewModel)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BetterTrophiesScreen(viewModel: MainViewModel) {
+    val state by viewModel.state.collectAsState()
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.surfaceContainerHighest,
+                        MaterialTheme.colorScheme.surface,
+                    ),
+                ),
+            ),
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        item {
+            NPSSOEntryCard(
+                npsso = state.npsso,
+                loading = state.isLoading,
+                error = state.error,
+                onNpssoChanged = viewModel::updateNpsso,
+                onConnect = viewModel::connect,
+                onPasteSignInUrl = viewModel::useSignInUrl,
+                logs = state.logLines,
+                onClearLogs = viewModel::clearLogs,
+                signInUrl = state.signInUrl,
+            )
+        }
+
+        state.dashboard?.let { dashboard ->
+            item {
+                ProfileHeader(
+                    avatarUrl = dashboard.profile.avatarUrl,
+                    onlineId = dashboard.profile.onlineId,
+                    realName = listOfNotNull(
+                        dashboard.profile.firstName,
+                        dashboard.profile.lastName,
+                    ).joinToString(" ").ifBlank { null },
+                    about = dashboard.profile.aboutMe,
+                )
+            }
+
+            item {
+                SummaryCard(
+                    level = dashboard.summary.trophyLevel.toString(),
+                    points = dashboard.summary.trophyPoints.toString(),
+                    progress = dashboard.summary.progress.toString(),
+                    bronze = dashboard.summary.earnedTrophies.bronze.toString(),
+                    silver = dashboard.summary.earnedTrophies.silver.toString(),
+                    gold = dashboard.summary.earnedTrophies.gold.toString(),
+                    platinum = dashboard.summary.earnedTrophies.platinum.toString(),
+                )
+            }
+
+            if (dashboard.recentTitles.isNotEmpty()) {
+                item {
+                    SectionTitle("Recent titles")
+                }
+                item {
+                    RecentTitlesRow(
+                        titles = dashboard.recentTitles,
+                        onSelect = { viewModel.loadTrophiesForTitle(it.npTitleId, it.titleName) },
+                    )
+                }
+            }
+
+            if (dashboard.trophyTitles.isNotEmpty()) {
+                item {
+                    SectionTitle("Trophy titles")
+                }
+                items(dashboard.trophyTitles, key = { it.titleId }) { title ->
+                    TrophyTitleCard(
+                        title = title,
+                        selected = state.selectedTitleId == title.titleId,
+                        onSelect = { viewModel.loadTrophiesForTitle(title.titleId, title.titleName) },
+                    )
+                }
+            }
+        }
+
+        state.selectedTitleName?.let { titleName ->
+            item {
+                SectionTitle(titleName)
+            }
+        }
+
+        if (state.isLoadingTrophies) {
+            item {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator()
+                }
+            }
+        } else {
+            items(state.trophies, key = { it.trophyId }) { trophy ->
+                TrophyCard(trophy = trophy)
+            }
+        }
+    }
+}
+
+@Composable
+private fun NPSSOEntryCard(
+    npsso: String,
+    loading: Boolean,
+    error: String?,
+    signInUrl: String,
+    logs: List<String>,
+    onNpssoChanged: (String) -> Unit,
+    onConnect: () -> Unit,
+    onPasteSignInUrl: () -> Unit,
+    onClearLogs: () -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Connect a PlayStation account", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                "Paste an NPSSO token to load your profile, trophy summary, titles, and earned trophies.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            OutlinedTextField(
+                value = npsso,
+                onValueChange = onNpssoChanged,
+                label = { Text("NPSSO token") },
+                modifier = Modifier.fillMaxWidth(),
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = onConnect, enabled = !loading && npsso.isNotBlank()) {
+                    Text(if (loading) "Loading..." else "Load trophies")
+                }
+                AssistChip(
+                    onClick = onPasteSignInUrl,
+                    label = { Text("Show sign-in URL") },
+                    colors = AssistChipDefaults.assistChipColors(),
+                )
+            }
+            if (error != null) {
+                Text(
+                    text = error,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            Text(
+                text = signInUrl,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+            ActivityLogPanel(
+                logs = logs,
+                onClearLogs = onClearLogs,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActivityLogPanel(
+    logs: List<String>,
+    onClearLogs: () -> Unit,
+) {
+    val scrollState = rememberScrollState()
+
+    LaunchedEffect(logs.size) {
+        scrollState.animateScrollTo(scrollState.maxValue)
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Activity log", style = MaterialTheme.typography.titleMedium)
+            AssistChip(
+                onClick = onClearLogs,
+                label = { Text("Clear") },
+                colors = AssistChipDefaults.assistChipColors(),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(180.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                .padding(12.dp),
+            contentAlignment = Alignment.TopStart,
+        ) {
+            if (logs.isEmpty()) {
+                Text(
+                    text = "No activity yet.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Column(
+                    modifier = Modifier.verticalScroll(scrollState),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    logs.forEach { line ->
+                        Text(
+                            text = line,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileHeader(
+    avatarUrl: String?,
+    onlineId: String,
+    realName: String?,
+    about: String?,
+) {
+    Card {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AsyncImage(
+                model = avatarUrl,
+                contentDescription = onlineId,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(RoundedCornerShape(24.dp)),
+            )
+            Spacer(Modifier.width(16.dp))
+            Column {
+                Text(onlineId, style = MaterialTheme.typography.headlineSmall)
+                if (!realName.isNullOrBlank()) {
+                    Text(realName, style = MaterialTheme.typography.titleMedium)
+                }
+                if (!about.isNullOrBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(about, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SummaryCard(
+    level: String,
+    points: String,
+    progress: String,
+    bronze: String,
+    silver: String,
+    gold: String,
+    platinum: String,
+) {
+    Card {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Trophy summary", style = MaterialTheme.typography.titleLarge)
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                StatPill("Level", level)
+                StatPill("Points", points)
+                StatPill("Progress", "$progress%")
+                StatPill("Bronze", bronze)
+                StatPill("Silver", silver)
+                StatPill("Gold", gold)
+                StatPill("Platinum", platinum)
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatPill(label: String, value: String) {
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Text(label, style = MaterialTheme.typography.labelMedium)
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun RecentTitlesRow(
+    titles: List<RecentTitle>,
+    onSelect: (RecentTitle) -> Unit,
+) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        titles.forEach { title ->
+            Card(
+                modifier = Modifier
+                    .width(220.dp)
+                    .clickable { onSelect(title) },
+            ) {
+                Column {
+                    AsyncImage(
+                        model = title.coverUrl,
+                        contentDescription = title.titleName,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(124.dp),
+                    )
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(title.titleName, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                        Text(
+                            "${title.platform} • ${title.playTimeHours}h",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrophyTitleCard(
+    title: GameTitle,
+    selected: Boolean,
+    onSelect: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onSelect)
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AsyncImage(
+                model = title.iconUrl,
+                contentDescription = title.titleName,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(RoundedCornerShape(20.dp)),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title.titleName, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "${title.platform} • ${title.progress}%",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "B ${title.earnedTrophies.bronze}  S ${title.earnedTrophies.silver}  G ${title.earnedTrophies.gold}  P ${title.earnedTrophies.platinum}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrophyCard(trophy: TrophyEntry) {
+    Card {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            AsyncImage(
+                model = trophy.iconUrl,
+                contentDescription = trophy.name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(60.dp)
+                    .clip(RoundedCornerShape(18.dp)),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(trophy.name ?: "Hidden trophy", style = MaterialTheme.typography.titleMedium)
+                val detail = trophy.detail
+                if (!detail.isNullOrBlank()) {
+                    Text(detail, style = MaterialTheme.typography.bodyMedium)
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    buildString {
+                        append(trophy.trophyType ?: "Unknown")
+                        trophy.earned?.let {
+                            append(" • ")
+                            append(if (it) "Earned" else "Not earned")
+                        }
+                        trophy.earnedRate?.let {
+                            append(" • ")
+                            append(it)
+                            append("%")
+                        }
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionTitle(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.titleLarge,
+        fontWeight = FontWeight.SemiBold,
+    )
+    HorizontalDivider(modifier = Modifier.padding(top = 6.dp))
+}
