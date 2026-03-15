@@ -72,7 +72,7 @@ class MainActivity : ComponentActivity() {
 private fun BetterTrophiesScreen(viewModel: MainViewModel) {
     val state by viewModel.state.collectAsState()
 
-    LazyColumn(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
@@ -83,6 +83,44 @@ private fun BetterTrophiesScreen(viewModel: MainViewModel) {
                     ),
                 ),
             ),
+    ) {
+        when (state.currentScreen) {
+            MainScreen.Dashboard -> DashboardScreen(
+                state = state,
+                onNpssoChanged = viewModel::updateNpsso,
+                onConnect = viewModel::connect,
+                onPasteSignInUrl = viewModel::useSignInUrl,
+                onClearLogs = viewModel::clearLogs,
+                onShowGames = viewModel::showGamesScreen,
+                onOpenRecentTitle = { viewModel.loadTrophiesForTitle(it.npTitleId, it.titleName) },
+            )
+
+            MainScreen.Games -> GamesScreen(
+                state = state,
+                onBack = viewModel::showDashboardScreen,
+                onSelectTitle = { title -> viewModel.loadTrophiesForTitle(title.titleId, title.titleName) },
+            )
+
+            MainScreen.TrophyDetail -> TrophyDetailsScreen(
+                state = state,
+                onBack = viewModel::showGamesScreen,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DashboardScreen(
+    state: MainUiState,
+    onNpssoChanged: (String) -> Unit,
+    onConnect: () -> Unit,
+    onPasteSignInUrl: () -> Unit,
+    onClearLogs: () -> Unit,
+    onShowGames: () -> Unit,
+    onOpenRecentTitle: (RecentTitle) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -91,11 +129,11 @@ private fun BetterTrophiesScreen(viewModel: MainViewModel) {
                 npsso = state.npsso,
                 loading = state.isLoading,
                 error = state.error,
-                onNpssoChanged = viewModel::updateNpsso,
-                onConnect = viewModel::connect,
-                onPasteSignInUrl = viewModel::useSignInUrl,
+                onNpssoChanged = onNpssoChanged,
+                onConnect = onConnect,
+                onPasteSignInUrl = onPasteSignInUrl,
                 logs = state.logLines,
-                onClearLogs = viewModel::clearLogs,
+                onClearLogs = onClearLogs,
                 signInUrl = state.signInUrl,
             )
         }
@@ -125,6 +163,13 @@ private fun BetterTrophiesScreen(viewModel: MainViewModel) {
                 )
             }
 
+            item {
+                GamesEntryCard(
+                    totalGames = dashboard.trophyTitles.size,
+                    onShowGames = onShowGames,
+                )
+            }
+
             if (dashboard.recentTitles.isNotEmpty()) {
                 item {
                     SectionTitle("Recent titles")
@@ -132,28 +177,72 @@ private fun BetterTrophiesScreen(viewModel: MainViewModel) {
                 item {
                     RecentTitlesRow(
                         titles = dashboard.recentTitles,
-                        onSelect = { viewModel.loadTrophiesForTitle(it.npTitleId, it.titleName) },
-                    )
-                }
-            }
-
-            if (dashboard.trophyTitles.isNotEmpty()) {
-                item {
-                    SectionTitle("Trophy titles")
-                }
-                items(dashboard.trophyTitles, key = { it.titleId }) { title ->
-                    TrophyTitleCard(
-                        title = title,
-                        selected = state.selectedTitleId == title.titleId,
-                        onSelect = { viewModel.loadTrophiesForTitle(title.titleId, title.titleName) },
+                        onSelect = onOpenRecentTitle,
                     )
                 }
             }
         }
+    }
+}
 
-        state.selectedTitleName?.let { titleName ->
+@Composable
+private fun GamesScreen(
+    state: MainUiState,
+    onBack: () -> Unit,
+    onSelectTitle: (GameTitle) -> Unit,
+) {
+    val dashboard = state.dashboard ?: return
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        item {
+            ScreenHeader(
+                title = "All games",
+                subtitle = "${dashboard.trophyTitles.size} trophy titles",
+                actionLabel = "Back",
+                onAction = onBack,
+            )
+        }
+
+        items(dashboard.trophyTitles, key = { it.titleId }) { title ->
+            TrophyTitleCard(
+                title = title,
+                selected = state.selectedTitleId == title.titleId,
+                onSelect = { onSelectTitle(title) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun TrophyDetailsScreen(
+    state: MainUiState,
+    onBack: () -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        item {
+            ScreenHeader(
+                title = state.selectedTitleName ?: "Trophies",
+                subtitle = state.selectedTitleId ?: "Selected game",
+                actionLabel = "All games",
+                onAction = onBack,
+            )
+        }
+
+        if (state.error != null) {
             item {
-                SectionTitle(titleName)
+                Text(
+                    text = state.error,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
             }
         }
 
@@ -166,11 +255,85 @@ private fun BetterTrophiesScreen(viewModel: MainViewModel) {
                     CircularProgressIndicator()
                 }
             }
+        } else if (state.trophies.isEmpty()) {
+            item {
+                EmptyStateCard("No trophies loaded for this title yet.")
+            }
         } else {
             items(state.trophies, key = { it.trophyId }) { trophy ->
                 TrophyCard(trophy = trophy)
             }
         }
+    }
+}
+
+@Composable
+private fun ScreenHeader(
+    title: String,
+    subtitle: String,
+    actionLabel: String,
+    onAction: () -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.headlineSmall)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            AssistChip(
+                onClick = onAction,
+                label = { Text(actionLabel) },
+                colors = AssistChipDefaults.assistChipColors(),
+            )
+        }
+    }
+}
+
+@Composable
+private fun GamesEntryCard(
+    totalGames: Int,
+    onShowGames: () -> Unit,
+) {
+    Card {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Library", style = MaterialTheme.typography.titleLarge)
+            Text(
+                "Browse all $totalGames trophy-enabled games on a dedicated screen instead of mixing the list with trophy details.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Button(onClick = onShowGames) {
+                Text("View all games")
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyStateCard(message: String) {
+    Card {
+        Text(
+            text = message,
+            modifier = Modifier.padding(20.dp),
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }
 

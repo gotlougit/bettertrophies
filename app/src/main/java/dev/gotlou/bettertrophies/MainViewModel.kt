@@ -24,6 +24,7 @@ data class MainUiState(
     val signInUrl: String = "",
     val dashboard: DashboardSnapshot? = null,
     val trophies: List<TrophyEntry> = emptyList(),
+    val currentScreen: MainScreen = MainScreen.Dashboard,
     val selectedTitleId: String? = null,
     val selectedTitleName: String? = null,
     val isLoading: Boolean = false,
@@ -31,6 +32,12 @@ data class MainUiState(
     val error: String? = null,
     val logLines: List<String> = emptyList(),
 )
+
+enum class MainScreen {
+    Dashboard,
+    Games,
+    TrophyDetail,
+}
 
 class MainViewModel : ViewModel() {
     private val _state = MutableStateFlow(MainUiState())
@@ -49,6 +56,16 @@ class MainViewModel : ViewModel() {
 
     fun clearLogs() {
         _state.update { it.copy(logLines = emptyList()) }
+    }
+
+    fun showDashboardScreen() {
+        _state.update { it.copy(currentScreen = MainScreen.Dashboard, error = null) }
+    }
+
+    fun showGamesScreen() {
+        _state.update { state ->
+            if (state.dashboard == null) state else state.copy(currentScreen = MainScreen.Games, error = null)
+        }
     }
 
     fun useSignInUrl() {
@@ -83,6 +100,7 @@ class MainViewModel : ViewModel() {
             _state.update {
                 it.copy(
                     isLoading = true,
+                    currentScreen = MainScreen.Dashboard,
                     dashboard = null,
                     error = null,
                     trophies = emptyList(),
@@ -118,6 +136,7 @@ class MainViewModel : ViewModel() {
                 _state.update {
                     it.copy(
                         isLoading = false,
+                        currentScreen = MainScreen.Dashboard,
                         dashboard = dashboard,
                         selectedTitleId = null,
                         selectedTitleName = null,
@@ -146,6 +165,7 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch(Dispatchers.IO) {
             _state.update {
                 it.copy(
+                    currentScreen = MainScreen.TrophyDetail,
                     selectedTitleId = titleId,
                     selectedTitleName = titleName,
                     isLoadingTrophies = true,
