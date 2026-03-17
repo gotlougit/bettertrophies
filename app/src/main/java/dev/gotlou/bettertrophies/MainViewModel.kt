@@ -11,6 +11,7 @@ import dev.gotlou.bettertrophies.stationplayer.TrophyDistributions
 import dev.gotlou.bettertrophies.stationplayer.UserGameTrophyInfo
 import dev.gotlou.bettertrophies.stationplayer.UserTrophySummary
 import dev.gotlou.bettertrophies.stationplayer.generateSignInUrl
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -177,6 +178,22 @@ class MainViewModel(
 
                 appendLog("Fetching profile.")
                 val profile = activeSession.getProfile()
+                appendLog(
+                    buildString {
+                        append("Fetched ${profile.avatars.size} profile avatar candidate(s)")
+                        profile.avatars
+                            .mapNotNull { avatar ->
+                                avatar.url
+                                    .takeIf { it.isNotBlank() }
+                                    ?.let { "${avatar.size}=$it" }
+                            }
+                            .takeIf { it.isNotEmpty() }
+                            ?.let { avatars ->
+                                append(": ")
+                                append(avatars.joinToString())
+                            }
+                    },
+                )
                 appendLog("Fetching trophy summary.")
                 val summary = activeSession.trophySummary()
                 appendLog("Fetching all trophy titles.")
@@ -403,8 +420,36 @@ class MainViewModel(
             isPlus = profile.isPlus,
             isVerified = profile.isVerified,
             languages = profile.languages,
-            avatarUrl = profile.avatars.firstOrNull()?.url,
+            avatarUrl = selectAvatarUrl(profile),
         )
+    }
+
+    private fun selectAvatarUrl(profile: MyInfo): String? {
+        return profile.avatars
+            .asSequence()
+            .filter { it.url.isNotBlank() }
+            .sortedByDescending { avatarPriority(it.size) }
+            .map { normalizeAvatarUrl(it.url) }
+            .firstOrNull()
+    }
+
+    private fun avatarPriority(size: String): Int {
+        return when (size.trim().lowercase(Locale.US)) {
+            "xl", "xlarge", "large", "l" -> 4
+            "m", "medium" -> 3
+            "s", "small" -> 2
+            "xs", "xsmall" -> 1
+            else -> 0
+        }
+    }
+
+    private fun normalizeAvatarUrl(url: String): String {
+        val trimmed = url.trim()
+        return when {
+            trimmed.startsWith("//") -> "https:$trimmed"
+            trimmed.startsWith("http://", ignoreCase = true) -> "https://${trimmed.removePrefix("http://")}"
+            else -> trimmed
+        }
     }
 
     private fun mapSummary(summary: UserTrophySummary): TrophySummaryRecord {
