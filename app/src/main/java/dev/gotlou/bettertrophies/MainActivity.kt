@@ -25,7 +25,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -34,11 +33,9 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -46,10 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import dev.gotlou.bettertrophies.ui.theme.BetterTrophiesTheme
@@ -108,7 +102,6 @@ private fun BetterTrophiesScreen(viewModel: MainViewModel) {
                 onNpssoChanged = viewModel::updateNpsso,
                 onConnect = viewModel::connect,
                 onPasteSignInUrl = viewModel::useSignInUrl,
-                onStartStoredTokenEdit = viewModel::startStoredTokenEdit,
                 onCancelStoredTokenEdit = viewModel::cancelStoredTokenEdit,
                 onClearStoredToken = viewModel::clearStoredToken,
                 onClearLogs = viewModel::clearLogs,
@@ -136,56 +129,34 @@ private fun DashboardScreen(
     onNpssoChanged: (String) -> Unit,
     onConnect: () -> Unit,
     onPasteSignInUrl: () -> Unit,
-    onStartStoredTokenEdit: () -> Unit,
     onCancelStoredTokenEdit: () -> Unit,
     onClearStoredToken: () -> Unit,
     onClearLogs: () -> Unit,
     onShowGames: () -> Unit,
     onOpenRecentTitle: (RecentTitle) -> Unit,
 ) {
+    val showAuthModule = state.isRestoringStoredNpsso || !state.hasStoredNpsso || state.isEditingStoredNpsso
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        if (state.isRestoringStoredNpsso && state.dashboard == null) {
+        if (showAuthModule) {
             item {
-                StartupStatusCard(
-                    logs = state.logLines,
-                    onClearLogs = onClearLogs,
-                )
-            }
-        } else if (!state.hasStoredNpsso || state.isEditingStoredNpsso) {
-            item {
-                NPSSOEntryCard(
-                    npsso = state.npsso,
-                    hasStoredNpsso = state.hasStoredNpsso,
-                    loading = state.isLoading,
-                    error = state.error,
+                AuthDashboardSection(
+                    state = state,
                     onNpssoChanged = onNpssoChanged,
                     onConnect = onConnect,
                     onPasteSignInUrl = onPasteSignInUrl,
-                    onCancelEdit = onCancelStoredTokenEdit,
-                    logs = state.logLines,
-                    onClearLogs = onClearLogs,
-                    signInUrl = state.signInUrl,
-                )
-            }
-        } else {
-            item {
-                StoredTokenCard(
-                    loading = state.isLoading,
-                    error = state.error,
-                    onReconnect = onConnect,
-                    onChangeToken = onStartStoredTokenEdit,
-                    onForgetToken = onClearStoredToken,
-                    logs = state.logLines,
+                    onCancelStoredTokenEdit = onCancelStoredTokenEdit,
                     onClearLogs = onClearLogs,
                 )
             }
         }
 
-        state.dashboard?.let { dashboard ->
+        val dashboard = state.dashboard
+        if (dashboard != null) {
             item {
                 ProfileHeader(
                     avatarUrl = dashboard.profile.avatarUrl,
@@ -228,34 +199,15 @@ private fun DashboardScreen(
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun StartupStatusCard(
-    logs: List<String>,
-    onClearLogs: () -> Unit,
-) {
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-        ),
-    ) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("Checking saved sign-in", style = MaterialTheme.typography.headlineSmall)
-            Text(
-                "Looking for a stored NPSSO token before deciding whether the sign-in form is needed.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            CircularProgressIndicator()
-            ActivityLogPanel(
-                logs = logs,
-                onClearLogs = onClearLogs,
-            )
+        } else if (state.hasStoredNpsso && !state.isEditingStoredNpsso) {
+            item {
+                StoredSessionStatusCard(
+                    loading = state.isLoading,
+                    error = state.error,
+                    onReconnect = onConnect,
+                    onResetSignIn = onClearStoredToken,
+                )
+            }
         }
     }
 }
@@ -413,96 +365,11 @@ private fun EmptyStateCard(message: String) {
 }
 
 @Composable
-private fun NPSSOEntryCard(
-    npsso: String,
-    hasStoredNpsso: Boolean,
-    loading: Boolean,
-    error: String?,
-    signInUrl: String,
-    logs: List<String>,
-    onNpssoChanged: (String) -> Unit,
-    onConnect: () -> Unit,
-    onPasteSignInUrl: () -> Unit,
-    onCancelEdit: () -> Unit,
-    onClearLogs: () -> Unit,
-) {
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-        ),
-    ) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                if (hasStoredNpsso) "Replace stored NPSSO token" else "Connect a PlayStation account",
-                style = MaterialTheme.typography.headlineSmall,
-            )
-            Text(
-                if (hasStoredNpsso) {
-                    "Enter a replacement NPSSO token to refresh the saved credentials used by the app."
-                } else {
-                    "Paste an NPSSO token to load your profile, trophy summary, titles, and earned trophies."
-                },
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            OutlinedTextField(
-                value = npsso,
-                onValueChange = onNpssoChanged,
-                label = { Text("NPSSO token") },
-                modifier = Modifier.fillMaxWidth(),
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = onConnect, enabled = !loading && npsso.isNotBlank()) {
-                    Text(if (loading) "Loading..." else if (hasStoredNpsso) "Save and reload" else "Load trophies")
-                }
-                AssistChip(
-                    onClick = onPasteSignInUrl,
-                    label = { Text("Show sign-in URL") },
-                    colors = AssistChipDefaults.assistChipColors(),
-                )
-                if (hasStoredNpsso) {
-                    AssistChip(
-                        onClick = onCancelEdit,
-                        label = { Text("Cancel") },
-                        colors = AssistChipDefaults.assistChipColors(),
-                    )
-                }
-            }
-            if (error != null) {
-                Text(
-                    text = error,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-            Text(
-                text = signInUrl,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
-            ActivityLogPanel(
-                logs = logs,
-                onClearLogs = onClearLogs,
-            )
-        }
-    }
-}
-
-@Composable
-private fun StoredTokenCard(
+private fun StoredSessionStatusCard(
     loading: Boolean,
     error: String?,
     onReconnect: () -> Unit,
-    onChangeToken: () -> Unit,
-    onForgetToken: () -> Unit,
-    logs: List<String>,
-    onClearLogs: () -> Unit,
+    onResetSignIn: () -> Unit,
 ) {
     Card(
         colors = CardDefaults.cardColors(
@@ -513,23 +380,18 @@ private fun StoredTokenCard(
             modifier = Modifier.padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("PlayStation account", style = MaterialTheme.typography.headlineSmall)
+            Text("Connecting saved account", style = MaterialTheme.typography.headlineSmall)
             Text(
-                "An NPSSO token is already stored on this device, so the app can reconnect without asking for it again after updates.",
+                "A saved NPSSO token is present. The app is reconnecting in the background before showing the dashboard.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(onClick = onReconnect, enabled = !loading) {
-                    Text(if (loading) "Loading..." else "Reload trophies")
+                    Text(if (loading) "Loading..." else "Retry")
                 }
                 AssistChip(
-                    onClick = onChangeToken,
-                    label = { Text("Change token") },
-                    colors = AssistChipDefaults.assistChipColors(),
-                )
-                AssistChip(
-                    onClick = onForgetToken,
-                    label = { Text("Forget token") },
+                    onClick = onResetSignIn,
+                    label = { Text("Reset sign-in") },
                     colors = AssistChipDefaults.assistChipColors(),
                 )
             }
@@ -539,67 +401,6 @@ private fun StoredTokenCard(
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodyMedium,
                 )
-            }
-            ActivityLogPanel(
-                logs = logs,
-                onClearLogs = onClearLogs,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ActivityLogPanel(
-    logs: List<String>,
-    onClearLogs: () -> Unit,
-) {
-    val scrollState = rememberScrollState()
-
-    LaunchedEffect(logs.size) {
-        scrollState.animateScrollTo(scrollState.maxValue)
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Activity log", style = MaterialTheme.typography.titleMedium)
-            AssistChip(
-                onClick = onClearLogs,
-                label = { Text("Clear") },
-                colors = AssistChipDefaults.assistChipColors(),
-            )
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(180.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                .padding(12.dp),
-            contentAlignment = Alignment.TopStart,
-        ) {
-            if (logs.isEmpty()) {
-                Text(
-                    text = "No activity yet.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                Column(
-                    modifier = Modifier.verticalScroll(scrollState),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    logs.forEach { line ->
-                        Text(
-                            text = line,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                        )
-                    }
-                }
             }
         }
     }
