@@ -7,6 +7,19 @@ uniffi). This Rust core library uses tokio under the hood and makes async networ
 requests to Sony servers to get the right info, provided it is given the right
 auth data.
 
+## Committing changes
+
+You are allowed to commit changes to the repo, however for safety reasons
+you CANNOT run "git commit". Instead we have alias "git-commit" that will
+prefix your commit message with "llm: ".
+
+Usage:
+
+git-commit foobar is correct
+git commit -m foobar is INCORRECT and WILL NOT WORK
+
+The correct invocation will translate to a commit message "llm: foobar"
+
 ## Workflows
 
 The repo has quite a lot of tooling to make LLM agents' lives easier. Chief
@@ -16,8 +29,8 @@ for more info.
 
 ### Base flow
 
-At the end of every significant change (this can include doing work that should
-solve a given issue), you need to always follow these steps:
+At the end of every significant change that impacts the app code in some way,
+you need to always follow these steps:
 
 1. Build the debug APK
 
