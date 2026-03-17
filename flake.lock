@@ -30,11 +30,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1771497977,
-        "narHash": "sha256-6JEHVAi822fIaitAqoTMoIcikLx2M1QsxKRZ3hgUqog=",
+        "lastModified": 1773774429,
+        "narHash": "sha256-SkXB+41yV39//1+Rgm1dH5XDyFQWzidNJr42D/5aGeo=",
         "owner": "maan2003",
         "repo": "andy",
-        "rev": "d22617ad133a45bed9a8b9b375e7e5bdd22b4218",
+        "rev": "6b2446c559d0055581bd061e8b0d8ae459b94dfe",
         "type": "github"
       },
       "original": {
