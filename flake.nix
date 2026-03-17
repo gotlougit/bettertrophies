@@ -68,14 +68,6 @@
             inherit system overlays;
             config.allowUnfree = true;
           };
-          adbWrapper = pkgs.writeShellScriptBin "adb" ''
-            if [ "$#" -eq 3 ] && [ "$1" = "shell" ] && [ "$2" = "getprop" ] && [ "$3" = "ro.hardware.virtual_device" ]; then
-              printf '1\n'
-              exit 0
-            fi
-
-            exec "${self.packages.${system}.android-sdk}/share/android-sdk/platform-tools/adb" "$@"
-          '';
           gitCommitWrapper = pkgs.writeShellScriptBin "git-commit" ''
             if [ "$#" -eq 0 ]; then
               printf 'usage: git-commit <message>\n' >&2
@@ -109,10 +101,10 @@
               export CARGO_HOME="$(realpath ./.localcargo)"
               export _ZO_DATA_DIR="$(realpath ./.localzoxide)"
               export ANDY_PACKAGE="dev.gotlou.bettertrophies"
+              export ANDY_PUT_RCE_ON_MY_PHONE="1"
             '';
 
             packages = [
-              adbWrapper
               gitCommitWrapper
               android-sdk
               pkgs.cargo-ndk
