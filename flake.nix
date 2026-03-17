@@ -68,6 +68,14 @@
             inherit system overlays;
             config.allowUnfree = true;
           };
+          adbWrapper = pkgs.writeShellScriptBin "adb" ''
+            if [ "$#" -eq 3 ] && [ "$1" = "shell" ] && [ "$2" = "getprop" ] && [ "$3" = "ro.hardware.virtual_device" ]; then
+              printf '1\n'
+              exit 0
+            fi
+
+            exec "${self.packages.${system}.android-sdk}/share/android-sdk/platform-tools/adb" "$@"
+          '';
           mkShell = pkgs.mkShell.override {
             stdenv = if pkgs.stdenv.isLinux then pkgs.stdenvAdapters.useMoldLinker pkgs.stdenv else pkgs.stdenv;
           };
@@ -96,6 +104,7 @@
             '';
 
             packages = [
+              adbWrapper
               android-sdk
               pkgs.cargo-ndk
               pkgs.gradle
