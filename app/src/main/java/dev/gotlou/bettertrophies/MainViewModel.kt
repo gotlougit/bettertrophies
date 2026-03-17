@@ -1,6 +1,7 @@
 package dev.gotlou.bettertrophies
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.gotlou.bettertrophies.stationplayer.MyInfo
 import dev.gotlou.bettertrophies.stationplayer.RecentPlayedTitle
@@ -21,6 +22,9 @@ import java.time.format.DateTimeFormatter
 
 data class MainUiState(
     val npsso: String = "",
+    val hasStoredNpsso: Boolean = false,
+    val isEditingStoredNpsso: Boolean = false,
+    val isRestoringStoredNpsso: Boolean = true,
     val signInUrl: String = "",
     val dashboard: DashboardSnapshot? = null,
     val trophies: List<TrophyEntry> = emptyList(),
@@ -39,19 +43,76 @@ enum class MainScreen {
     TrophyDetail,
 }
 
-class MainViewModel : ViewModel() {
+class MainViewModel(
+    application: Application,
+) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(MainUiState())
     val state: StateFlow<MainUiState> = _state.asStateFlow()
 
+    private val tokenStore = NpssoTokenStore(application.applicationContext)
     private var session: StationPlayer? = null
+    private var storedNpsso: String? = null
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
 
     init {
         initializeStationPlayer()
+        restoreStoredNpsso()
     }
 
     fun updateNpsso(value: String) {
         _state.update { it.copy(npsso = value, error = null) }
+    }
+
+    fun startStoredTokenEdit() {
+        _state.update {
+            it.copy(
+                npsso = "",
+                isEditingStoredNpsso = true,
+                error = null,
+            )
+        }
+    }
+
+    fun cancelStoredTokenEdit() {
+        _state.update {
+            it.copy(
+                npsso = storedNpsso.orEmpty(),
+                isEditingStoredNpsso = false,
+                error = null,
+            )
+        }
+    }
+
+    fun clearStoredToken() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { tokenStore.clearToken() }
+                .onSuccess {
+                    storedNpsso = null
+                    session = null
+                    appendLog("Cleared the stored NPSSO token.")
+                    _state.update {
+                        it.copy(
+                            npsso = "",
+                            hasStoredNpsso = false,
+                            isEditingStoredNpsso = false,
+                            dashboard = null,
+                            trophies = emptyList(),
+                            currentScreen = MainScreen.Dashboard,
+                            selectedTitleId = null,
+                            selectedTitleName = null,
+                            isLoading = false,
+                            isLoadingTrophies = false,
+                            error = null,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    appendLog("Failed to clear the stored NPSSO token: ${formatThrowable(error)}")
+                    _state.update {
+                        it.copy(error = userFacingError(error, "Failed to clear the stored NPSSO token."))
+                    }
+                }
+        }
     }
 
     fun clearLogs() {
@@ -130,11 +191,16 @@ class MainViewModel : ViewModel() {
                     recentTitles = recentTitles.data.recentPlayedTitles.map(::mapRecentTitle),
                 )
                 session = activeSession
+                tokenStore.writeToken(token)
+                storedNpsso = token
                 appendLog(
                     "Dashboard loaded with ${dashboard.trophyTitles.size} trophy titles and ${dashboard.recentTitles.size} recent titles.",
                 )
                 _state.update {
                     it.copy(
+                        npsso = token,
+                        hasStoredNpsso = true,
+                        isEditingStoredNpsso = false,
                         isLoading = false,
                         currentScreen = MainScreen.Dashboard,
                         dashboard = dashboard,
@@ -262,6 +328,41 @@ class MainViewModel : ViewModel() {
                     )
                 }
             }
+        }
+    }
+
+    private fun restoreStoredNpsso() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { tokenStore.readToken() }
+                .onSuccess { token ->
+                    if (token.isNullOrBlank()) {
+                    appendLog("No stored NPSSO token found.")
+                    _state.update { it.copy(isRestoringStoredNpsso = false) }
+                    return@onSuccess
+                }
+
+                storedNpsso = token
+                appendLog("Restored a stored NPSSO token. Attempting automatic sign-in.")
+                    _state.update {
+                        it.copy(
+                            npsso = token,
+                            hasStoredNpsso = true,
+                            isEditingStoredNpsso = false,
+                            isRestoringStoredNpsso = false,
+                            error = null,
+                        )
+                    }
+                    connect()
+                }
+                .onFailure { error ->
+                    appendLog("Failed to read the stored NPSSO token: ${formatThrowable(error)}")
+                    _state.update {
+                        it.copy(
+                            isRestoringStoredNpsso = false,
+                            error = userFacingError(error, "Failed to read the stored NPSSO token."),
+                        )
+                    }
+                }
         }
     }
 

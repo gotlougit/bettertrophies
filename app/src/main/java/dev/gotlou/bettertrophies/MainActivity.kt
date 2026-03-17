@@ -90,6 +90,9 @@ private fun BetterTrophiesScreen(viewModel: MainViewModel) {
                 onNpssoChanged = viewModel::updateNpsso,
                 onConnect = viewModel::connect,
                 onPasteSignInUrl = viewModel::useSignInUrl,
+                onStartStoredTokenEdit = viewModel::startStoredTokenEdit,
+                onCancelStoredTokenEdit = viewModel::cancelStoredTokenEdit,
+                onClearStoredToken = viewModel::clearStoredToken,
                 onClearLogs = viewModel::clearLogs,
                 onShowGames = viewModel::showGamesScreen,
                 onOpenRecentTitle = { viewModel.loadTrophiesForTitle(it.npTitleId, it.titleName) },
@@ -115,6 +118,9 @@ private fun DashboardScreen(
     onNpssoChanged: (String) -> Unit,
     onConnect: () -> Unit,
     onPasteSignInUrl: () -> Unit,
+    onStartStoredTokenEdit: () -> Unit,
+    onCancelStoredTokenEdit: () -> Unit,
+    onClearStoredToken: () -> Unit,
     onClearLogs: () -> Unit,
     onShowGames: () -> Unit,
     onOpenRecentTitle: (RecentTitle) -> Unit,
@@ -124,18 +130,41 @@ private fun DashboardScreen(
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        item {
-            NPSSOEntryCard(
-                npsso = state.npsso,
-                loading = state.isLoading,
-                error = state.error,
-                onNpssoChanged = onNpssoChanged,
-                onConnect = onConnect,
-                onPasteSignInUrl = onPasteSignInUrl,
-                logs = state.logLines,
-                onClearLogs = onClearLogs,
-                signInUrl = state.signInUrl,
-            )
+        if (state.isRestoringStoredNpsso && state.dashboard == null) {
+            item {
+                StartupStatusCard(
+                    logs = state.logLines,
+                    onClearLogs = onClearLogs,
+                )
+            }
+        } else if (!state.hasStoredNpsso || state.isEditingStoredNpsso) {
+            item {
+                NPSSOEntryCard(
+                    npsso = state.npsso,
+                    hasStoredNpsso = state.hasStoredNpsso,
+                    loading = state.isLoading,
+                    error = state.error,
+                    onNpssoChanged = onNpssoChanged,
+                    onConnect = onConnect,
+                    onPasteSignInUrl = onPasteSignInUrl,
+                    onCancelEdit = onCancelStoredTokenEdit,
+                    logs = state.logLines,
+                    onClearLogs = onClearLogs,
+                    signInUrl = state.signInUrl,
+                )
+            }
+        } else {
+            item {
+                StoredTokenCard(
+                    loading = state.isLoading,
+                    error = state.error,
+                    onReconnect = onConnect,
+                    onChangeToken = onStartStoredTokenEdit,
+                    onForgetToken = onClearStoredToken,
+                    logs = state.logLines,
+                    onClearLogs = onClearLogs,
+                )
+            }
         }
 
         state.dashboard?.let { dashboard ->
@@ -181,6 +210,34 @@ private fun DashboardScreen(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun StartupStatusCard(
+    logs: List<String>,
+    onClearLogs: () -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Checking saved sign-in", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                "Looking for a stored NPSSO token before deciding whether the sign-in form is needed.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            CircularProgressIndicator()
+            ActivityLogPanel(
+                logs = logs,
+                onClearLogs = onClearLogs,
+            )
         }
     }
 }
@@ -340,6 +397,7 @@ private fun EmptyStateCard(message: String) {
 @Composable
 private fun NPSSOEntryCard(
     npsso: String,
+    hasStoredNpsso: Boolean,
     loading: Boolean,
     error: String?,
     signInUrl: String,
@@ -347,6 +405,7 @@ private fun NPSSOEntryCard(
     onNpssoChanged: (String) -> Unit,
     onConnect: () -> Unit,
     onPasteSignInUrl: () -> Unit,
+    onCancelEdit: () -> Unit,
     onClearLogs: () -> Unit,
 ) {
     Card(
@@ -358,9 +417,16 @@ private fun NPSSOEntryCard(
             modifier = Modifier.padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Connect a PlayStation account", style = MaterialTheme.typography.headlineSmall)
             Text(
-                "Paste an NPSSO token to load your profile, trophy summary, titles, and earned trophies.",
+                if (hasStoredNpsso) "Replace stored NPSSO token" else "Connect a PlayStation account",
+                style = MaterialTheme.typography.headlineSmall,
+            )
+            Text(
+                if (hasStoredNpsso) {
+                    "Enter a replacement NPSSO token to refresh the saved credentials used by the app."
+                } else {
+                    "Paste an NPSSO token to load your profile, trophy summary, titles, and earned trophies."
+                },
                 style = MaterialTheme.typography.bodyMedium,
             )
             OutlinedTextField(
@@ -373,13 +439,20 @@ private fun NPSSOEntryCard(
             )
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(onClick = onConnect, enabled = !loading && npsso.isNotBlank()) {
-                    Text(if (loading) "Loading..." else "Load trophies")
+                    Text(if (loading) "Loading..." else if (hasStoredNpsso) "Save and reload" else "Load trophies")
                 }
                 AssistChip(
                     onClick = onPasteSignInUrl,
                     label = { Text("Show sign-in URL") },
                     colors = AssistChipDefaults.assistChipColors(),
                 )
+                if (hasStoredNpsso) {
+                    AssistChip(
+                        onClick = onCancelEdit,
+                        label = { Text("Cancel") },
+                        colors = AssistChipDefaults.assistChipColors(),
+                    )
+                }
             }
             if (error != null) {
                 Text(
@@ -395,6 +468,60 @@ private fun NPSSOEntryCard(
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )
+            ActivityLogPanel(
+                logs = logs,
+                onClearLogs = onClearLogs,
+            )
+        }
+    }
+}
+
+@Composable
+private fun StoredTokenCard(
+    loading: Boolean,
+    error: String?,
+    onReconnect: () -> Unit,
+    onChangeToken: () -> Unit,
+    onForgetToken: () -> Unit,
+    logs: List<String>,
+    onClearLogs: () -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("PlayStation account", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                "An NPSSO token is already stored on this device, so the app can reconnect without asking for it again after updates.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = onReconnect, enabled = !loading) {
+                    Text(if (loading) "Loading..." else "Reload trophies")
+                }
+                AssistChip(
+                    onClick = onChangeToken,
+                    label = { Text("Change token") },
+                    colors = AssistChipDefaults.assistChipColors(),
+                )
+                AssistChip(
+                    onClick = onForgetToken,
+                    label = { Text("Forget token") },
+                    colors = AssistChipDefaults.assistChipColors(),
+                )
+            }
+            if (error != null) {
+                Text(
+                    text = error,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
             ActivityLogPanel(
                 logs = logs,
                 onClearLogs = onClearLogs,
