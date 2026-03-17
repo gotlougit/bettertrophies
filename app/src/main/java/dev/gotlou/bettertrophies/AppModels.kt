@@ -27,7 +27,8 @@ data class TrophySummaryRecord(
 )
 
 data class GameTitle(
-    val titleId: String,
+    val id: String,
+    val npTitleId: String?,
     val titleName: String,
     val platform: String,
     val progress: Int,

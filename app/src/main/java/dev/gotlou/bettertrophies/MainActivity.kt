@@ -98,7 +98,7 @@ private fun BetterTrophiesScreen(viewModel: MainViewModel) {
             MainScreen.Games -> GamesScreen(
                 state = state,
                 onBack = viewModel::showDashboardScreen,
-                onSelectTitle = { title -> viewModel.loadTrophiesForTitle(title.titleId, title.titleName) },
+                onSelectTitle = viewModel::loadTrophiesForGame,
             )
 
             MainScreen.TrophyDetail -> TrophyDetailsScreen(
@@ -207,10 +207,10 @@ private fun GamesScreen(
             )
         }
 
-        items(dashboard.trophyTitles, key = { it.titleId }) { title ->
+        items(dashboard.trophyTitles, key = { it.id }) { title ->
             TrophyTitleCard(
                 title = title,
-                selected = state.selectedTitleId == title.titleId,
+                selected = state.selectedTitleId == title.id,
                 onSelect = { onSelectTitle(title) },
             )
         }

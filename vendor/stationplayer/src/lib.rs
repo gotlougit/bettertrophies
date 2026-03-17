@@ -321,6 +321,30 @@ impl StationPlayer {
             .await
     }
 
+    /// Returns every trophy for one communication/service pair as a flat
+    /// `Vec<trophy::Trophy>`.
+    ///
+    /// Use this when a caller already has the service identifiers from a trophy
+    /// title listing response and does not need title-ID lookup first.
+    pub fn get_all_trophies_for_communication_id(
+        &self,
+        np_communication_id: String,
+        np_service_name: String,
+    ) -> StationPlayerResult<Vec<trophy::Trophy>> {
+        runtime().block_on(
+            self.get_all_trophies_for_communication_id_async(np_communication_id, np_service_name),
+        )
+    }
+
+    async fn get_all_trophies_for_communication_id_async(
+        &self,
+        np_communication_id: String,
+        np_service_name: String,
+    ) -> StationPlayerResult<Vec<trophy::Trophy>> {
+        self.trophies_by_np_communication_id(&np_communication_id, &np_service_name)
+            .await
+    }
+
     /// Returns every trophy for one title ID grouped by `group_id`.
     ///
     /// The returned [`BTreeMap`] uses each trophy group's `group_id` as the key

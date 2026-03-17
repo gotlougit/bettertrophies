@@ -184,6 +184,9 @@ interface StationPlayer {
   sequence<Trophy> get_all_trophies_for_title_id(string title_id);
 
   [Throws=StationPlayerError]
+  sequence<Trophy> get_all_trophies_for_communication_id(string np_communication_id, string np_service_name);
+
+  [Throws=StationPlayerError]
   record<string, sequence<Trophy>> trophy_group_trophies_by_title_id(string title_id);
 
   [Throws=StationPlayerError]

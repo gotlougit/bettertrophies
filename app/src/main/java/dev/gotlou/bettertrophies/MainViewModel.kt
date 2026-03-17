@@ -195,6 +195,56 @@ class MainViewModel : ViewModel() {
         }
     }
 
+    fun loadTrophiesForGame(title: GameTitle) {
+        val activeSession = session ?: run {
+            appendLog("Trophy load blocked because there is no active StationPlayer session.")
+            _state.update { it.copy(error = "Connect with an NPSSO token first.") }
+            return
+        }
+
+        val selectedId = title.id
+        val requestLabel = title.npTitleId ?: "${title.communicationId} (${title.serviceName})"
+
+        viewModelScope.launch(Dispatchers.IO) {
+            _state.update {
+                it.copy(
+                    currentScreen = MainScreen.TrophyDetail,
+                    selectedTitleId = selectedId,
+                    selectedTitleName = title.titleName,
+                    isLoadingTrophies = true,
+                    error = null,
+                )
+            }
+            appendLog("Loading trophies for ${title.titleName} ($requestLabel).")
+            try {
+                StationPlayerLoader.load()
+                val trophies = if (title.npTitleId != null) {
+                    activeSession.getAllTrophiesForTitleId(title.npTitleId)
+                } else {
+                    activeSession.getAllTrophiesForCommunicationId(
+                        title.communicationId,
+                        title.serviceName,
+                    )
+                }.map(::mapTrophy)
+                appendLog("Loaded ${trophies.size} trophies for ${title.titleName}.")
+                _state.update {
+                    it.copy(
+                        trophies = trophies,
+                        isLoadingTrophies = false,
+                    )
+                }
+            } catch (error: Throwable) {
+                appendLog("Trophy load failed for ${title.titleName}: ${formatThrowable(error)}")
+                _state.update {
+                    it.copy(
+                        isLoadingTrophies = false,
+                        error = userFacingError(error, "Failed to load trophies."),
+                    )
+                }
+            }
+        }
+    }
+
     private fun initializeStationPlayer() {
         viewModelScope.launch(Dispatchers.IO) {
             appendLog("Preparing stationplayer bindings.")
@@ -267,8 +317,10 @@ class MainViewModel : ViewModel() {
     }
 
     private fun mapGameTitle(title: UserGameTrophyInfo): GameTitle {
+        val stableId = title.npTitleId ?: "comm:${title.npCommunicationId}:${title.npServiceName}"
         return GameTitle(
-            titleId = title.npTitleId ?: title.npCommunicationId,
+            id = stableId,
+            npTitleId = title.npTitleId,
             titleName = title.title,
             platform = title.platform,
             progress = title.progress.toInt(),
