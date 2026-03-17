@@ -76,6 +76,14 @@
 
             exec "${self.packages.${system}.android-sdk}/share/android-sdk/platform-tools/adb" "$@"
           '';
+          gitCommitWrapper = pkgs.writeShellScriptBin "git-commit" ''
+            if [ "$#" -eq 0 ]; then
+              printf 'usage: git-commit <message>\n' >&2
+              exit 1
+            fi
+
+            exec git commit -m "llm: $*"
+          '';
           mkShell = pkgs.mkShell.override {
             stdenv = if pkgs.stdenv.isLinux then pkgs.stdenvAdapters.useMoldLinker pkgs.stdenv else pkgs.stdenv;
           };
@@ -105,6 +113,7 @@
 
             packages = [
               adbWrapper
+              gitCommitWrapper
               android-sdk
               pkgs.cargo-ndk
               pkgs.gradle
