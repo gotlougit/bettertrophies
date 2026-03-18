@@ -1,6 +1,7 @@
 package dev.gotlou.bettertrophies
 
 import android.os.Bundle
+import android.text.format.DateUtils
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
@@ -32,6 +33,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -158,6 +160,14 @@ private fun DashboardScreen(
         val dashboard = state.dashboard
         if (dashboard != null) {
             item {
+                CacheStatusCard(
+                    title = if (state.isShowingCachedDashboard) "Showing saved dashboard" else "Dashboard loaded",
+                    updatedAtEpochMs = state.dashboardCacheUpdatedAtEpochMs,
+                    refreshing = state.isRefreshingDashboard,
+                )
+            }
+
+            item {
                 ProfileHeader(
                     avatarUrl = dashboard.profile.avatarUrl,
                     onlineId = dashboard.profile.onlineId,
@@ -234,6 +244,16 @@ private fun GamesScreen(
             )
         }
 
+        if (state.isShowingCachedDashboard || state.isRefreshingDashboard) {
+            item {
+                CacheStatusCard(
+                    title = "Showing saved library",
+                    updatedAtEpochMs = state.dashboardCacheUpdatedAtEpochMs,
+                    refreshing = state.isRefreshingDashboard,
+                )
+            }
+        }
+
         items(dashboard.trophyTitles, key = { it.id }) { title ->
             TrophyTitleCard(
                 title = title,
@@ -273,7 +293,17 @@ private fun TrophyDetailsScreen(
             }
         }
 
-        if (state.isLoadingTrophies) {
+        if (state.isShowingCachedTrophies || state.isRefreshingTrophies) {
+            item {
+                CacheStatusCard(
+                    title = "Showing saved trophies",
+                    updatedAtEpochMs = state.trophiesCacheUpdatedAtEpochMs,
+                    refreshing = state.isRefreshingTrophies,
+                )
+            }
+        }
+
+        if (state.isLoadingTrophies && state.trophies.isEmpty()) {
             item {
                 Box(
                     modifier = Modifier.fillMaxWidth(),
@@ -401,6 +431,42 @@ private fun StoredSessionStatusCard(
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodyMedium,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CacheStatusCard(
+    title: String,
+    updatedAtEpochMs: Long?,
+    refreshing: Boolean,
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = buildString {
+                    append(
+                        updatedAtEpochMs?.let(::formatCacheTimestamp)
+                            ?: "Saved data timestamp unavailable.",
+                    )
+                    if (refreshing) {
+                        append(" Refreshing in the background.")
+                    }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            if (refreshing) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
         }
     }
@@ -626,4 +692,13 @@ private fun SectionTitle(title: String) {
         fontWeight = FontWeight.SemiBold,
     )
     HorizontalDivider(modifier = Modifier.padding(top = 6.dp))
+}
+
+private fun formatCacheTimestamp(updatedAtEpochMs: Long): String {
+    val relative = DateUtils.getRelativeTimeSpanString(
+        updatedAtEpochMs,
+        System.currentTimeMillis(),
+        DateUtils.MINUTE_IN_MILLIS,
+    )
+    return "Saved $relative."
 }

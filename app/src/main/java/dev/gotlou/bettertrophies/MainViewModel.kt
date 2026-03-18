@@ -11,6 +11,7 @@ import dev.gotlou.bettertrophies.stationplayer.TrophyDistributions
 import dev.gotlou.bettertrophies.stationplayer.UserGameTrophyInfo
 import dev.gotlou.bettertrophies.stationplayer.UserTrophySummary
 import dev.gotlou.bettertrophies.stationplayer.generateSignInUrl
+import java.security.MessageDigest
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +35,12 @@ data class MainUiState(
     val selectedTitleName: String? = null,
     val isLoading: Boolean = false,
     val isLoadingTrophies: Boolean = false,
+    val isShowingCachedDashboard: Boolean = false,
+    val isRefreshingDashboard: Boolean = false,
+    val dashboardCacheUpdatedAtEpochMs: Long? = null,
+    val isShowingCachedTrophies: Boolean = false,
+    val isRefreshingTrophies: Boolean = false,
+    val trophiesCacheUpdatedAtEpochMs: Long? = null,
     val error: String? = null,
     val logLines: List<String> = emptyList(),
 )
@@ -51,8 +58,10 @@ class MainViewModel(
     val state: StateFlow<MainUiState> = _state.asStateFlow()
 
     private val tokenStore = NpssoTokenStore(application.applicationContext)
+    private val cacheStore = AppServices.cacheStore
     private var session: StationPlayer? = null
     private var storedNpsso: String? = null
+    private var currentAccountKey: String? = null
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
 
     init {
@@ -86,9 +95,12 @@ class MainViewModel(
 
     fun clearStoredToken() {
         viewModelScope.launch(Dispatchers.IO) {
+            val accountKeyToClear = currentAccountKey ?: storedNpsso?.let(::accountKeyForToken)
             runCatching { tokenStore.clearToken() }
                 .onSuccess {
+                    accountKeyToClear?.let(cacheStore::clearAccount)
                     storedNpsso = null
+                    currentAccountKey = null
                     session = null
                     appendLog("Cleared the stored NPSSO token.")
                     _state.update {
@@ -103,6 +115,12 @@ class MainViewModel(
                             selectedTitleName = null,
                             isLoading = false,
                             isLoadingTrophies = false,
+                            isShowingCachedDashboard = false,
+                            isRefreshingDashboard = false,
+                            dashboardCacheUpdatedAtEpochMs = null,
+                            isShowingCachedTrophies = false,
+                            isRefreshingTrophies = false,
+                            trophiesCacheUpdatedAtEpochMs = null,
                             error = null,
                         )
                     }
@@ -159,22 +177,31 @@ class MainViewModel(
         }
 
         viewModelScope.launch(Dispatchers.IO) {
-            _state.update {
-                it.copy(
-                    isLoading = true,
-                    currentScreen = MainScreen.Dashboard,
-                    dashboard = null,
-                    error = null,
-                    trophies = emptyList(),
-                    selectedTitleId = null,
-                    selectedTitleName = null,
-                )
+            val accountKey = accountKeyForToken(token)
+            currentAccountKey = accountKey
+            val hasCachedDashboard = loadCachedDashboard(accountKey)
+            if (!hasCachedDashboard) {
+                _state.update {
+                    it.copy(
+                        isLoading = true,
+                        currentScreen = MainScreen.Dashboard,
+                        dashboard = null,
+                        isShowingCachedDashboard = false,
+                        isRefreshingDashboard = false,
+                        dashboardCacheUpdatedAtEpochMs = null,
+                        error = null,
+                        trophies = emptyList(),
+                        selectedTitleId = null,
+                        selectedTitleName = null,
+                    )
+                }
             }
             appendLog("Loading native stationplayer library.")
             try {
                 StationPlayerLoader.load()
                 appendLog("Creating StationPlayer session from the supplied NPSSO token.")
                 val activeSession = StationPlayer.init(token)
+                session = activeSession
 
                 appendLog("Fetching profile.")
                 val profile = activeSession.getProfile()
@@ -207,7 +234,8 @@ class MainViewModel(
                     trophyTitles = trophyTitles.map(::mapGameTitle),
                     recentTitles = recentTitles.data.recentPlayedTitles.map(::mapRecentTitle),
                 )
-                session = activeSession
+                val updatedAtEpochMs = System.currentTimeMillis()
+                cacheStore.writeDashboard(accountKey, dashboard, updatedAtEpochMs)
                 tokenStore.writeToken(token)
                 storedNpsso = token
                 appendLog(
@@ -219,11 +247,18 @@ class MainViewModel(
                         hasStoredNpsso = true,
                         isEditingStoredNpsso = false,
                         isLoading = false,
+                        isShowingCachedDashboard = false,
+                        isRefreshingDashboard = false,
+                        dashboardCacheUpdatedAtEpochMs = updatedAtEpochMs,
                         currentScreen = MainScreen.Dashboard,
                         dashboard = dashboard,
                         selectedTitleId = null,
                         selectedTitleName = null,
                         trophies = emptyList(),
+                        isShowingCachedTrophies = false,
+                        isRefreshingTrophies = false,
+                        trophiesCacheUpdatedAtEpochMs = null,
+                        error = null,
                     )
                 }
             } catch (error: Throwable) {
@@ -231,7 +266,12 @@ class MainViewModel(
                 _state.update {
                     it.copy(
                         isLoading = false,
-                        error = userFacingError(error, "Failed to connect."),
+                        isRefreshingDashboard = false,
+                        error = if (hasCachedDashboard) {
+                            "Showing saved data. ${userFacingError(error, "Refresh failed.")}"
+                        } else {
+                            userFacingError(error, "Failed to connect.")
+                        },
                     )
                 }
             }
@@ -239,31 +279,47 @@ class MainViewModel(
     }
 
     fun loadTrophiesForTitle(titleId: String, titleName: String) {
-        val activeSession = session ?: run {
-            appendLog("Trophy load blocked because there is no active StationPlayer session.")
-            _state.update { it.copy(error = "Connect with an NPSSO token first.") }
-            return
-        }
-
         viewModelScope.launch(Dispatchers.IO) {
-            _state.update {
-                it.copy(
-                    currentScreen = MainScreen.TrophyDetail,
-                    selectedTitleId = titleId,
-                    selectedTitleName = titleName,
-                    isLoadingTrophies = true,
-                    error = null,
-                )
-            }
+            val accountKey = currentAccountKey
+            val cachedTrophies = accountKey?.let { cacheStore.readTrophies(it, titleId) }
+            showTrophyScreenWithCachedData(titleId, titleName, cachedTrophies)
             appendLog("Loading trophies for $titleName ($titleId).")
+            val activeSession = session
+            if (activeSession == null) {
+                if (cachedTrophies != null) {
+                    appendLog("Showing cached trophies for $titleName while the account reconnects.")
+                    _state.update {
+                        it.copy(
+                            isLoadingTrophies = false,
+                            isRefreshingTrophies = false,
+                        )
+                    }
+                } else {
+                    appendLog("Trophy load blocked because there is no active StationPlayer session.")
+                    _state.update {
+                        it.copy(
+                            isLoadingTrophies = false,
+                            isRefreshingTrophies = false,
+                            error = "Connect with an NPSSO token first.",
+                        )
+                    }
+                }
+                return@launch
+            }
             try {
                 StationPlayerLoader.load()
                 val trophies = activeSession.getAllTrophiesForTitleId(titleId).map(::mapTrophy)
+                val updatedAtEpochMs = System.currentTimeMillis()
+                accountKey?.let { cacheStore.writeTrophies(it, titleId, trophies, updatedAtEpochMs) }
                 appendLog("Loaded ${trophies.size} trophies for $titleName.")
                 _state.update {
                     it.copy(
                         trophies = trophies,
                         isLoadingTrophies = false,
+                        isShowingCachedTrophies = false,
+                        isRefreshingTrophies = false,
+                        trophiesCacheUpdatedAtEpochMs = updatedAtEpochMs,
+                        error = null,
                     )
                 }
             } catch (error: Throwable) {
@@ -271,7 +327,12 @@ class MainViewModel(
                 _state.update {
                     it.copy(
                         isLoadingTrophies = false,
-                        error = userFacingError(error, "Failed to load trophies."),
+                        isRefreshingTrophies = false,
+                        error = if (cachedTrophies != null) {
+                            "Showing saved trophies. ${userFacingError(error, "Refresh failed.")}"
+                        } else {
+                            userFacingError(error, "Failed to load trophies.")
+                        },
                     )
                 }
             }
@@ -279,26 +340,36 @@ class MainViewModel(
     }
 
     fun loadTrophiesForGame(title: GameTitle) {
-        val activeSession = session ?: run {
-            appendLog("Trophy load blocked because there is no active StationPlayer session.")
-            _state.update { it.copy(error = "Connect with an NPSSO token first.") }
-            return
-        }
-
         val selectedId = title.id
         val requestLabel = title.npTitleId ?: "${title.communicationId} (${title.serviceName})"
 
         viewModelScope.launch(Dispatchers.IO) {
-            _state.update {
-                it.copy(
-                    currentScreen = MainScreen.TrophyDetail,
-                    selectedTitleId = selectedId,
-                    selectedTitleName = title.titleName,
-                    isLoadingTrophies = true,
-                    error = null,
-                )
-            }
+            val accountKey = currentAccountKey
+            val cachedTrophies = accountKey?.let { cacheStore.readTrophies(it, selectedId) }
+            showTrophyScreenWithCachedData(selectedId, title.titleName, cachedTrophies)
             appendLog("Loading trophies for ${title.titleName} ($requestLabel).")
+            val activeSession = session
+            if (activeSession == null) {
+                if (cachedTrophies != null) {
+                    appendLog("Showing cached trophies for ${title.titleName} while the account reconnects.")
+                    _state.update {
+                        it.copy(
+                            isLoadingTrophies = false,
+                            isRefreshingTrophies = false,
+                        )
+                    }
+                } else {
+                    appendLog("Trophy load blocked because there is no active StationPlayer session.")
+                    _state.update {
+                        it.copy(
+                            isLoadingTrophies = false,
+                            isRefreshingTrophies = false,
+                            error = "Connect with an NPSSO token first.",
+                        )
+                    }
+                }
+                return@launch
+            }
             try {
                 StationPlayerLoader.load()
                 val trophies = if (title.npTitleId != null) {
@@ -309,11 +380,17 @@ class MainViewModel(
                         title.serviceName,
                     )
                 }.map(::mapTrophy)
+                val updatedAtEpochMs = System.currentTimeMillis()
+                accountKey?.let { cacheStore.writeTrophies(it, selectedId, trophies, updatedAtEpochMs) }
                 appendLog("Loaded ${trophies.size} trophies for ${title.titleName}.")
                 _state.update {
                     it.copy(
                         trophies = trophies,
                         isLoadingTrophies = false,
+                        isShowingCachedTrophies = false,
+                        isRefreshingTrophies = false,
+                        trophiesCacheUpdatedAtEpochMs = updatedAtEpochMs,
+                        error = null,
                     )
                 }
             } catch (error: Throwable) {
@@ -321,7 +398,12 @@ class MainViewModel(
                 _state.update {
                     it.copy(
                         isLoadingTrophies = false,
-                        error = userFacingError(error, "Failed to load trophies."),
+                        isRefreshingTrophies = false,
+                        error = if (cachedTrophies != null) {
+                            "Showing saved trophies. ${userFacingError(error, "Refresh failed.")}"
+                        } else {
+                            userFacingError(error, "Failed to load trophies.")
+                        },
                     )
                 }
             }
@@ -359,6 +441,7 @@ class MainViewModel(
                 }
 
                 storedNpsso = token
+                currentAccountKey = accountKeyForToken(token)
                 appendLog("Restored a stored NPSSO token. Attempting automatic sign-in.")
                     _state.update {
                         it.copy(
@@ -369,6 +452,7 @@ class MainViewModel(
                             error = null,
                         )
                     }
+                    loadCachedDashboard(currentAccountKey!!)
                     connect()
                 }
                 .onFailure { error ->
@@ -388,6 +472,59 @@ class MainViewModel(
         _state.update { current ->
             current.copy(logLines = (current.logLines + "$timestamp  $message").takeLast(200))
         }
+    }
+
+    private fun loadCachedDashboard(accountKey: String): Boolean {
+        val cachedDashboard = cacheStore.readDashboard(accountKey) ?: return false
+        appendLog(
+            "Loaded cached dashboard updated at ${cachedDashboard.updatedAtEpochMs} for ${cachedDashboard.snapshot.profile.onlineId}.",
+        )
+        _state.update {
+            it.copy(
+                dashboard = cachedDashboard.snapshot,
+                currentScreen = MainScreen.Dashboard,
+                selectedTitleId = null,
+                selectedTitleName = null,
+                trophies = emptyList(),
+                isLoading = true,
+                isShowingCachedDashboard = true,
+                isRefreshingDashboard = true,
+                dashboardCacheUpdatedAtEpochMs = cachedDashboard.updatedAtEpochMs,
+                isShowingCachedTrophies = false,
+                isRefreshingTrophies = false,
+                trophiesCacheUpdatedAtEpochMs = null,
+                error = null,
+            )
+        }
+        return true
+    }
+
+    private fun showTrophyScreenWithCachedData(
+        titleId: String,
+        titleName: String,
+        cachedTrophies: CachedTrophyEntries?,
+    ) {
+        _state.update {
+            it.copy(
+                currentScreen = MainScreen.TrophyDetail,
+                selectedTitleId = titleId,
+                selectedTitleName = titleName,
+                trophies = cachedTrophies?.trophies.orEmpty(),
+                isLoadingTrophies = cachedTrophies == null,
+                isShowingCachedTrophies = cachedTrophies != null,
+                isRefreshingTrophies = cachedTrophies != null,
+                trophiesCacheUpdatedAtEpochMs = cachedTrophies?.updatedAtEpochMs,
+                error = null,
+            )
+        }
+        if (cachedTrophies != null) {
+            appendLog("Loaded ${cachedTrophies.trophies.size} cached trophies for $titleName.")
+        }
+    }
+
+    private fun accountKeyForToken(token: String): String {
+        val bytes = MessageDigest.getInstance("SHA-256").digest(token.toByteArray())
+        return bytes.joinToString(separator = "") { byte -> "%02x".format(byte) }
     }
 
     private fun userFacingError(error: Throwable, fallback: String): String {
