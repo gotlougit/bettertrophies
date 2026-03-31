@@ -167,6 +167,76 @@ dictionary HintAvailabilityResponse {
   sequence<GraphQLError>? errors;
 };
 
+dictionary CloudMediaCapture {
+  boolean? archived;
+  string? broadcast_date;
+  string? category;
+  string? capture_type;
+  string? channel_id;
+  string? cloud_status;
+  string? color_range;
+  string? concept_id;
+  u64? count_of_viewers;
+  string? description;
+  string? download_url;
+  i64? end;
+  string? expire_at;
+  u64? file_size;
+  string? file_type;
+  string id;
+  boolean? is_spoiler;
+  string? language;
+  string? large_preview_image;
+  string? resolution;
+  string? sce_platform;
+  u32? sce_title_age_rating;
+  string? sce_title_id;
+  string? sce_title_name;
+  string? sce_user_account_id;
+  string? sce_user_online_id;
+  string? screenshot_url;
+  string? service_type;
+  string? small_preview_image;
+  string? source_of_media;
+  string? source_ugc_id;
+  i64? start;
+  string? streaming_preview_image;
+  string? title;
+  string? title_image_url;
+  string? transcode_error;
+  string? transcode_job_id;
+  string? transcode_progress;
+  string? transcode_status;
+  u32? ugc_type;
+  string? upload_date;
+  u64? video_duration;
+  string? video_url;
+};
+
+dictionary CloudMediaCaptureUrls {
+  string? download_url;
+  string? large_preview_image;
+  string? screenshot_url;
+  string? small_preview_image;
+  string? video_url;
+};
+
+dictionary CloudMediaCaptureGroup {
+  string title_id;
+  string title_name;
+  string? concept_id;
+  string? title_image_url;
+  sequence<CloudMediaCapture> captures;
+};
+
+dictionary DownloadedCloudMediaCapture {
+  string ugc_id;
+  string? content_type;
+  string file_name;
+  string source_url;
+  sequence<u8> bytes;
+};
+
 interface StationPlayer {
   [Name=init, Throws=StationPlayerError]
   constructor(string npsso);
@@ -206,4 +276,19 @@ interface StationPlayer {
 
   [Throws=StationPlayerError]
   RecentPlayedTitlesResponse recent_played_titles(u32? count);
+
+  [Throws=StationPlayerError]
+  sequence<CloudMediaCapture> get_all_cloud_media_captures();
+
+  [Throws=StationPlayerError]
+  sequence<CloudMediaCaptureGroup> get_all_cloud_media_capture_groups();
+
+  [Throws=StationPlayerError]
+  CloudMediaCapture cloud_media_capture(string ugc_id);
+
+  [Throws=StationPlayerError]
+  CloudMediaCaptureUrls cloud_media_capture_urls(string ugc_id);
+
+  [Throws=StationPlayerError]
+  DownloadedCloudMediaCapture download_cloud_media_capture(string ugc_id);
 };

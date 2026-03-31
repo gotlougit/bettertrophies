@@ -357,6 +357,106 @@ fn print_recent_played_titles(
     }
 }
 
+fn print_cloud_media_capture_groups(groups: &[stationplayer::CloudMediaCaptureGroup]) {
+    let capture_count = groups
+        .iter()
+        .map(|group| group.captures.len())
+        .sum::<usize>();
+    println!(
+        "cloud media gallery: {} titles, {} captures",
+        groups.len(),
+        capture_count
+    );
+
+    for group in groups {
+        println!(
+            "  {} [{}] {} captures",
+            group.title_name,
+            group.title_id,
+            group.captures.len()
+        );
+
+        for capture in &group.captures {
+            println!("    {}", format_cloud_media_capture_line(capture));
+        }
+    }
+}
+
+fn format_cloud_media_capture_line(capture: &stationplayer::CloudMediaCapture) -> String {
+    let mut details = Vec::new();
+    details.push(format!("id {}", capture.id));
+
+    if let Some(upload_date) = capture.upload_date.as_deref() {
+        details.push(format!("captured {}", friendly_timestamp(upload_date)));
+    }
+    if let Some(capture_type) = capture.capture_type.as_deref() {
+        details.push(capture_type.to_string());
+    }
+    if let Some(file_type) = capture.file_type.as_deref() {
+        details.push(file_type.to_string());
+    }
+    if let Some(resolution) = capture.resolution.as_deref() {
+        details.push(resolution.to_string());
+    }
+    if let Some(file_size) = capture.file_size {
+        details.push(format_size(file_size));
+    }
+    if let Some(video_duration) = capture.video_duration {
+        details.push(format!(
+            "duration {}",
+            format_duration_seconds(video_duration)
+        ));
+    }
+    if let Some(platform) = capture.sce_platform.as_deref() {
+        details.push(platform.to_string());
+    }
+    if let Some(is_spoiler) = capture.is_spoiler {
+        details.push(format!("spoiler {}", yes_no(is_spoiler)));
+    }
+    if let Some(expire_at) = capture.expire_at.as_deref() {
+        details.push(format!("expires {}", friendly_timestamp(expire_at)));
+    }
+    if let Some(transcode_status) = capture.transcode_status.as_deref() {
+        details.push(format!("transcode {}", transcode_status));
+    }
+
+    details.join("  ")
+}
+
+fn friendly_timestamp(value: &str) -> String {
+    value
+        .strip_suffix('Z')
+        .map(|timestamp| format!("{} UTC", timestamp.replace('T', " ")))
+        .unwrap_or_else(|| value.replace('T', " "))
+}
+
+fn format_size(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = 1024.0 * 1024.0;
+    const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+    let bytes_f64 = bytes as f64;
+
+    if bytes_f64 >= GIB {
+        format!("{:.1} GiB", bytes_f64 / GIB)
+    } else if bytes_f64 >= MIB {
+        format!("{:.1} MiB", bytes_f64 / MIB)
+    } else if bytes_f64 >= KIB {
+        format!("{:.1} KiB", bytes_f64 / KIB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn format_duration_seconds(seconds: u64) -> String {
+    let minutes = seconds / 60;
+    let seconds = seconds % 60;
+    if minutes == 0 {
+        format!("{seconds}s")
+    } else {
+        format!("{minutes}m {seconds:02}s")
+    }
+}
+
 fn print_json<T>(label: &str, value: &T) -> Result<(), Box<dyn Error + Send + Sync>>
 where
     T: Serialize,
@@ -406,24 +506,20 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     println!("  np communication id: {}", np_communication_id);
     println!("  np service name: {}", np_service_name);
 
-    let trophy_groups = station_player
-        .trophy_groups(np_communication_id.clone(), Some(np_service_name.clone()))?;
+    let trophy_groups =
+        station_player.trophy_groups(np_communication_id.clone(), Some(np_service_name.clone()))?;
     print_trophy_groups(&trophy_groups);
 
     let all_trophies = if let Some(np_title_id) = selected_game.np_title_id.as_deref() {
-        station_player
-            .get_all_trophies_for_title_id(np_title_id.to_string())
-            ?
+        station_player.get_all_trophies_for_title_id(np_title_id.to_string())?
     } else {
         let mut trophies = Vec::new();
         for group in &trophy_groups.groups {
-            let mut group_trophies = station_player
-                .trophy_group_trophies(
-                    np_communication_id.clone(),
-                    group.group_id.clone(),
-                    Some(np_service_name.clone()),
-                )
-                ?;
+            let mut group_trophies = station_player.trophy_group_trophies(
+                np_communication_id.clone(),
+                group.group_id.clone(),
+                Some(np_service_name.clone()),
+            )?;
             trophies.append(&mut group_trophies);
         }
         trophies
@@ -456,12 +552,11 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         selected_trophy.earned.map(yes_no).unwrap_or("unknown")
     );
 
-    let trophy_detail = station_player
-        .trophy_detail(
-            np_communication_id.clone(),
-            selected_trophy.trophy_id.clone(),
-            Some(np_service_name.clone()),
-        )?;
+    let trophy_detail = station_player.trophy_detail(
+        np_communication_id.clone(),
+        selected_trophy.trophy_id.clone(),
+        Some(np_service_name.clone()),
+    )?;
     print_trophy_detail(&trophy_detail, None);
 
     match station_player
@@ -477,9 +572,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
 
     let hint_trophy_ids = vec![selected_trophy.trophy_id.clone()];
-    match station_player
-        .trophy_hint_availability(np_communication_id.clone(), hint_trophy_ids)
-    {
+    match station_player.trophy_hint_availability(np_communication_id.clone(), hint_trophy_ids) {
         Ok(hint_availability) => {
             print_graphql_status("trophy hint availability", &hint_availability);
         }
@@ -488,6 +581,9 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
         Err(error) => return Err(error.into()),
     }
+
+    let cloud_media_capture_groups = station_player.get_all_cloud_media_capture_groups()?;
+    print_cloud_media_capture_groups(&cloud_media_capture_groups);
 
     Ok(())
 }

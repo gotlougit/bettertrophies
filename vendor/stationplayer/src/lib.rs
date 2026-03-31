@@ -8,6 +8,9 @@ use std::sync::OnceLock;
 use tokio::runtime::{Builder, Runtime};
 
 use crate::auth::AccessToken;
+pub use crate::cloudmediagallery::{
+    CloudMediaCapture, CloudMediaCaptureGroup, CloudMediaCaptureUrls, DownloadedCloudMediaCapture,
+};
 use crate::headers::generate_graphql_correlation_id;
 pub use crate::playedtitles::{
     CodexSummary, Media, RecentPlayedTitle, RecentPlayedTitlesData, RecentPlayedTitlesResponse,
@@ -20,6 +23,7 @@ pub use crate::trophy::{
 };
 
 mod auth;
+pub mod cloudmediagallery;
 #[allow(dead_code)]
 mod consts;
 mod graphql;
@@ -140,6 +144,19 @@ impl StationPlayer {
         T: DeserializeOwned,
     {
         builder.send().await?.error_for_status()?.json::<T>().await
+    }
+
+    async fn send_binary(
+        builder: RequestBuilder,
+    ) -> Result<(Vec<u8>, Option<String>), reqwest::Error> {
+        let response = builder.send().await?.error_for_status()?;
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(ToOwned::to_owned);
+        let bytes = response.bytes().await?;
+        Ok((bytes.to_vec(), content_type))
     }
 
     /// Returns the signed-in account as [`auth::AccountInfo`].
@@ -741,5 +758,139 @@ impl StationPlayer {
             }
             Err(e) => Err(StationPlayerError::from(e)),
         }
+    }
+
+    /// Returns every capture currently visible in Cloud Media Gallery.
+    pub fn get_all_cloud_media_captures(
+        &self,
+    ) -> StationPlayerResult<Vec<cloudmediagallery::CloudMediaCapture>> {
+        runtime().block_on(self.get_all_cloud_media_captures_async())
+    }
+
+    async fn get_all_cloud_media_captures_async(
+        &self,
+    ) -> StationPlayerResult<Vec<cloudmediagallery::CloudMediaCapture>> {
+        let mut cursor_mark = None::<String>;
+        let mut captures = Vec::new();
+
+        loop {
+            let mut page: cloudmediagallery::CloudMediaGalleryResponse =
+                Self::send_json(cloudmediagallery::get_cloud_media_gallery(
+                    &self.client,
+                    self.access_token(),
+                    100,
+                    cursor_mark.as_deref(),
+                ))
+                .await
+                .map_err(StationPlayerError::from)?;
+
+            captures.append(&mut page.ugc_documents);
+
+            match page.next_cursor_mark {
+                Some(next_cursor_mark) if next_cursor_mark != "-1" => {
+                    cursor_mark = Some(next_cursor_mark)
+                }
+                _ => break,
+            }
+        }
+
+        Ok(captures)
+    }
+
+    /// Returns Cloud Media Gallery captures grouped by PlayStation title.
+    pub fn get_all_cloud_media_capture_groups(
+        &self,
+    ) -> StationPlayerResult<Vec<cloudmediagallery::CloudMediaCaptureGroup>> {
+        runtime().block_on(self.get_all_cloud_media_capture_groups_async())
+    }
+
+    async fn get_all_cloud_media_capture_groups_async(
+        &self,
+    ) -> StationPlayerResult<Vec<cloudmediagallery::CloudMediaCaptureGroup>> {
+        let captures = self.get_all_cloud_media_captures_async().await?;
+        Ok(cloudmediagallery::group_captures_by_title(captures))
+    }
+
+    /// Returns fresh metadata for a single Cloud Media Gallery capture.
+    pub fn cloud_media_capture(
+        &self,
+        ugc_id: String,
+    ) -> StationPlayerResult<cloudmediagallery::CloudMediaCapture> {
+        runtime().block_on(self.cloud_media_capture_async(ugc_id))
+    }
+
+    async fn cloud_media_capture_async(
+        &self,
+        ugc_id: String,
+    ) -> StationPlayerResult<cloudmediagallery::CloudMediaCapture> {
+        let mut response: cloudmediagallery::CloudMediaGalleryResponse =
+            Self::send_json(cloudmediagallery::get_cloud_media_capture_content(
+                &self.client,
+                self.access_token(),
+                &ugc_id,
+            ))
+            .await
+            .map_err(StationPlayerError::from)?;
+
+        response
+            .ugc_documents
+            .drain(..)
+            .next()
+            .ok_or(StationPlayerError::NotFound)
+    }
+
+    /// Returns signed download URLs for one Cloud Media Gallery capture.
+    pub fn cloud_media_capture_urls(
+        &self,
+        ugc_id: String,
+    ) -> StationPlayerResult<cloudmediagallery::CloudMediaCaptureUrls> {
+        runtime().block_on(self.cloud_media_capture_urls_async(ugc_id))
+    }
+
+    async fn cloud_media_capture_urls_async(
+        &self,
+        ugc_id: String,
+    ) -> StationPlayerResult<cloudmediagallery::CloudMediaCaptureUrls> {
+        Self::send_json(cloudmediagallery::get_cloud_media_capture_urls(
+            &self.client,
+            self.access_token(),
+            &ugc_id,
+        ))
+        .await
+        .map_err(StationPlayerError::from)
+    }
+
+    /// Downloads the primary asset for one Cloud Media Gallery capture.
+    pub fn download_cloud_media_capture(
+        &self,
+        ugc_id: String,
+    ) -> StationPlayerResult<cloudmediagallery::DownloadedCloudMediaCapture> {
+        runtime().block_on(self.download_cloud_media_capture_async(ugc_id))
+    }
+
+    async fn download_cloud_media_capture_async(
+        &self,
+        ugc_id: String,
+    ) -> StationPlayerResult<cloudmediagallery::DownloadedCloudMediaCapture> {
+        let urls = self.cloud_media_capture_urls_async(ugc_id.clone()).await?;
+        let source_url = cloudmediagallery::resolve_primary_download_url(&urls)
+            .ok_or(StationPlayerError::Parse)?
+            .to_string();
+        let (bytes, content_type) = Self::send_binary(self.client.get(&source_url))
+            .await
+            .map_err(StationPlayerError::from)?;
+        let file_name = cloudmediagallery::file_name_for_download(
+            &ugc_id,
+            &source_url,
+            content_type.as_deref(),
+        );
+
+        Ok(cloudmediagallery::DownloadedCloudMediaCapture {
+            ugc_id,
+            content_type,
+            file_name,
+            source_url,
+            bytes,
+        })
     }
 }
