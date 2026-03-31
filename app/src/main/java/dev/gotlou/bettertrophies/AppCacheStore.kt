@@ -452,6 +452,7 @@ class AppCacheStore(
             .put("localThumbnailPath", capture.localThumbnailPath)
             .put("primaryAssetUrl", capture.primaryAssetUrl)
             .put("localPrimaryAssetPath", capture.localPrimaryAssetPath)
+            .put("localPrimaryAssetGalleryUri", capture.localPrimaryAssetGalleryUri)
             .put("localPrimaryAssetContentType", capture.localPrimaryAssetContentType)
             .put("localPrimaryAssetFileName", capture.localPrimaryAssetFileName)
             .toString()
@@ -478,6 +479,7 @@ class AppCacheStore(
             localThumbnailPath = item.optNullableString("localThumbnailPath"),
             primaryAssetUrl = item.optNullableString("primaryAssetUrl"),
             localPrimaryAssetPath = item.optNullableString("localPrimaryAssetPath"),
+            localPrimaryAssetGalleryUri = item.optNullableString("localPrimaryAssetGalleryUri"),
             localPrimaryAssetContentType = item.optNullableString("localPrimaryAssetContentType"),
             localPrimaryAssetFileName = item.optNullableString("localPrimaryAssetFileName"),
             isCachedOnly = false,

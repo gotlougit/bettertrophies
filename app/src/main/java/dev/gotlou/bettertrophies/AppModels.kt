@@ -86,6 +86,7 @@ data class CaptureEntry(
     val localThumbnailPath: String?,
     val primaryAssetUrl: String?,
     val localPrimaryAssetPath: String?,
+    val localPrimaryAssetGalleryUri: String?,
     val localPrimaryAssetContentType: String?,
     val localPrimaryAssetFileName: String?,
     val isCachedOnly: Boolean,

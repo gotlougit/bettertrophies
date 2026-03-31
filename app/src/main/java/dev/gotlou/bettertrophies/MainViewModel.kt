@@ -529,6 +529,7 @@ class MainViewModel(
             updated = updated.copy(
                 primaryAssetUrl = downloaded.sourceUrl,
                 localPrimaryAssetPath = localPath,
+                localPrimaryAssetGalleryUri = null,
                 localPrimaryAssetContentType = downloaded.contentType,
                 localPrimaryAssetFileName = downloaded.fileName,
             )
@@ -719,6 +720,7 @@ class MainViewModel(
                 localThumbnailPath = existingPathOrNull(fresh.localThumbnailPath ?: cached?.localThumbnailPath),
                 primaryAssetUrl = fresh.primaryAssetUrl ?: cached?.primaryAssetUrl,
                 localPrimaryAssetPath = existingPathOrNull(fresh.localPrimaryAssetPath ?: cached?.localPrimaryAssetPath),
+                localPrimaryAssetGalleryUri = fresh.localPrimaryAssetGalleryUri ?: cached?.localPrimaryAssetGalleryUri,
                 localPrimaryAssetContentType = fresh.localPrimaryAssetContentType ?: cached?.localPrimaryAssetContentType,
                 localPrimaryAssetFileName = fresh.localPrimaryAssetFileName ?: cached?.localPrimaryAssetFileName,
                 isCachedOnly = false,
@@ -919,6 +921,7 @@ class MainViewModel(
             localThumbnailPath = null,
             primaryAssetUrl = capture.screenshotUrl ?: capture.downloadUrl ?: capture.videoUrl,
             localPrimaryAssetPath = null,
+            localPrimaryAssetGalleryUri = null,
             localPrimaryAssetContentType = null,
             localPrimaryAssetFileName = null,
             isCachedOnly = false,

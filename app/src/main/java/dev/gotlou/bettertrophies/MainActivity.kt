@@ -1,7 +1,12 @@
 package dev.gotlou.bettertrophies
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.text.format.DateUtils
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
@@ -17,15 +22,17 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -36,22 +43,33 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
 import dev.gotlou.bettertrophies.ui.theme.BetterTrophiesTheme
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
@@ -327,6 +345,8 @@ private fun CaptureDetailsScreen(
         ?.captures
         ?.sortedByDescending { it.uploadDate.sortKey() }
         .orEmpty()
+    var selectedCaptureId by remember(state.selectedCaptureGroupId) { mutableStateOf<String?>(null) }
+    val selectedCapture = captures.firstOrNull { it.ugcId == selectedCaptureId }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -377,9 +397,19 @@ private fun CaptureDetailsScreen(
             }
         } else {
             items(captures, key = { it.ugcId }) { capture ->
-                CaptureCard(capture = capture)
+                CaptureCard(
+                    capture = capture,
+                    onOpen = { selectedCaptureId = capture.ugcId },
+                )
             }
         }
+    }
+
+    selectedCapture?.let { capture ->
+        CaptureViewerDialog(
+            capture = capture,
+            onDismiss = { selectedCaptureId = null },
+        )
     }
 }
 
@@ -930,7 +960,10 @@ private fun TrophyCard(trophy: TrophyEntry) {
 }
 
 @Composable
-private fun CaptureCard(capture: CaptureEntry) {
+private fun CaptureCard(
+    capture: CaptureEntry,
+    onOpen: () -> Unit,
+) {
     Card {
         Column(
             modifier = Modifier
@@ -946,7 +979,8 @@ private fun CaptureCard(capture: CaptureEntry) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(maxWidth * 9f / 16f)
-                        .clip(RoundedCornerShape(20.dp)),
+                        .clip(RoundedCornerShape(20.dp))
+                        .clickable(onClick = onOpen),
                 )
             }
 
@@ -977,6 +1011,7 @@ private fun CaptureCard(capture: CaptureEntry) {
             Text(
                 buildString {
                     when {
+                        capture.localPrimaryAssetGalleryUri != null -> append("Saved to Pictures/BetterTrophies")
                         capture.localPrimaryAssetPath != null -> append("Saved full quality locally")
                         capture.primaryAssetUrl != null -> append("Full quality available")
                         else -> append("Preview only")
@@ -999,11 +1034,161 @@ private fun CaptureCard(capture: CaptureEntry) {
     }
 }
 
+@Composable
+private fun CaptureViewerDialog(
+    capture: CaptureEntry,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var localGalleryUri by remember(capture.ugcId) { mutableStateOf(capture.localPrimaryAssetGalleryUri) }
+    val resolvedCapture = remember(capture, localGalleryUri) {
+        if (localGalleryUri == capture.localPrimaryAssetGalleryUri) {
+            capture
+        } else {
+            capture.copy(localPrimaryAssetGalleryUri = localGalleryUri)
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(28.dp),
+            color = Color(0xFF10141B),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text(
+                    text = capture.description?.takeIf { it.isNotBlank() } ?: capture.titleName,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                )
+
+                if (capture.isVideoCapture) {
+                    AsyncImage(
+                        model = capture.thumbnailModel,
+                        contentDescription = capture.description ?: capture.titleName,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(16f / 9f)
+                            .clip(RoundedCornerShape(24.dp)),
+                    )
+                    Text(
+                        text = "Videos open in your preferred player. Screenshots render inline at full quality here.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.82f),
+                    )
+                } else {
+                    AsyncImage(
+                        model = capture.fullQualityModel,
+                        contentDescription = capture.description ?: capture.titleName,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(24.dp)),
+                    )
+                }
+
+                Text(
+                    text = buildString {
+                        append(capture.captureTypeLabel)
+                        capture.resolution?.takeIf { it.isNotBlank() }?.let {
+                            append(" • ")
+                            append(it)
+                        }
+                        capture.fileSizeBytes?.let {
+                            append(" • ")
+                            append(formatFileSize(it))
+                        }
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.82f),
+                )
+
+                Text(
+                    text = if (resolvedCapture.localPrimaryAssetGalleryUri.isNullOrBlank()) {
+                        "Download saves the full-quality file to Pictures/BetterTrophies."
+                    } else {
+                        "Saved to Pictures/BetterTrophies and ready to share."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.72f),
+                )
+
+                if (capture.isVideoCapture) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Button(
+                            onClick = { openCaptureExternally(context, resolvedCapture) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Play")
+                        }
+
+                        OutlinedButton(
+                            onClick = { shareCapture(context, resolvedCapture) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Share")
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    localGalleryUri = downloadCaptureToGallery(context, resolvedCapture) ?: localGalleryUri
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(if (resolvedCapture.localPrimaryAssetGalleryUri.isNullOrBlank()) "Download" else "Saved")
+                        }
+                    }
+                } else {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Button(
+                            onClick = { shareCapture(context, resolvedCapture) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Share")
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    localGalleryUri = downloadCaptureToGallery(context, resolvedCapture) ?: localGalleryUri
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(if (resolvedCapture.localPrimaryAssetGalleryUri.isNullOrBlank()) "Download" else "Saved")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 private val CaptureEntry.thumbnailModel: Any?
     get() = localThumbnailPath?.let(::File) ?: thumbnailUrl
 
 private val CaptureEntry.previewModel: Any?
     get() = localPrimaryAssetPath?.let(::File) ?: thumbnailModel ?: primaryAssetUrl
+
+private val CaptureEntry.fullQualityModel: Any?
+    get() = localPrimaryAssetGalleryUri?.let(Uri::parse) ?: localPrimaryAssetPath?.let(::File) ?: previewModel
+
+private val CaptureEntry.isVideoCapture: Boolean
+    get() = localPrimaryAssetContentType?.startsWith("video/") == true || captureType?.lowercase() == "video"
 
 private val CaptureEntry.captureTypeLabel: String
     get() = when (captureType?.lowercase()) {
@@ -1022,6 +1207,71 @@ private fun formatFileSize(bytes: Long): String {
         else -> "${bytes / (1024L * 1024L * 1024L)} GB"
     }
 }
+
+private fun openCaptureExternally(context: Context, capture: CaptureEntry) {
+    val uri = resolveShareUri(capture) ?: run {
+        Toast.makeText(context, "Full-quality media is still downloading.", Toast.LENGTH_SHORT).show()
+        return
+    }
+    val intent = Intent(Intent.ACTION_VIEW)
+        .setDataAndType(uri, capture.mimeType)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    launchIntent(context, intent, "No app can open this capture yet.")
+}
+
+private fun shareCapture(context: Context, capture: CaptureEntry) {
+    val uri = resolveShareUri(capture) ?: run {
+        Toast.makeText(context, "Nothing to share yet.", Toast.LENGTH_SHORT).show()
+        return
+    }
+    val intent = Intent(Intent.ACTION_SEND)
+        .setType(capture.mimeType)
+        .putExtra(Intent.EXTRA_STREAM, uri)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    launchIntent(context, Intent.createChooser(intent, "Share capture"), "No share targets are available.")
+}
+
+private fun launchIntent(
+    context: Context,
+    intent: Intent,
+    failureMessage: String,
+) {
+    runCatching {
+        context.startActivity(intent)
+    }.onFailure {
+        if (it is ActivityNotFoundException) {
+            Toast.makeText(context, failureMessage, Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, it.message ?: failureMessage, Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+private fun resolveShareUri(capture: CaptureEntry): Uri? = AppServices.captureMediaStore.shareUriFor(capture)
+
+private suspend fun downloadCaptureToGallery(
+    context: Context,
+    capture: CaptureEntry,
+): String? {
+    val savedUri = withContext(Dispatchers.IO) {
+        AppServices.captureMediaStore.savePrimaryAssetToGallery(capture)
+    }
+    if (savedUri == null) {
+        Toast.makeText(context, "No full-quality file is available to save yet.", Toast.LENGTH_SHORT).show()
+        return null
+    }
+    Toast.makeText(context, "Saved to Pictures/BetterTrophies.", Toast.LENGTH_SHORT).show()
+    return savedUri
+}
+
+private val CaptureEntry.mimeType: String
+    get() = localPrimaryAssetContentType
+        ?.substringBefore(';')
+        ?.takeIf { it.isNotBlank() }
+        ?: when {
+            isVideoCapture -> "video/*"
+            else -> "image/*"
+        }
 
 @Composable
 private fun SectionTitle(title: String) {
