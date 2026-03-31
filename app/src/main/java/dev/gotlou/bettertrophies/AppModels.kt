@@ -67,6 +67,13 @@ data class TrophyEntry(
     val earnedRate: String?,
 )
 
+enum class TrophySortOption(val label: String) {
+    Default("Default"),
+    EarnedNewest("Earned date"),
+    NotEarnedFirst("Earned status"),
+    Rarity("Rarity"),
+}
+
 data class CaptureEntry(
     val ugcId: String,
     val titleId: String,

@@ -49,6 +49,7 @@ data class MainUiState(
     val isShowingCachedTrophies: Boolean = false,
     val isRefreshingTrophies: Boolean = false,
     val trophiesCacheUpdatedAtEpochMs: Long? = null,
+    val trophySort: TrophySortOption = TrophySortOption.Default,
     val isShowingCachedCaptures: Boolean = false,
     val isRefreshingCaptures: Boolean = false,
     val capturesCacheUpdatedAtEpochMs: Long? = null,
@@ -163,6 +164,10 @@ class MainViewModel(
         _state.update { current ->
             if (current.dashboard == null) current else current.copy(currentScreen = MainScreen.Games, error = null)
         }
+    }
+
+    fun setTrophySort(sort: TrophySortOption) {
+        _state.update { it.copy(trophySort = sort) }
     }
 
     fun showCapturesScreen() {

@@ -40,6 +40,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -67,6 +69,10 @@ import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
 import dev.gotlou.bettertrophies.ui.theme.BetterTrophiesTheme
 import java.io.File
+import java.time.Instant
+import java.time.OffsetDateTime
+import java.time.ZonedDateTime
+import java.time.temporal.ChronoUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -144,6 +150,7 @@ private fun BetterTrophiesScreen(viewModel: MainViewModel) {
             MainScreen.TrophyDetail -> TrophyDetailsScreen(
                 state = state,
                 onBack = viewModel::showGamesScreen,
+                onSortChanged = viewModel::setTrophySort,
             )
 
             MainScreen.Captures -> CapturesScreen(
@@ -459,7 +466,12 @@ private fun GamesScreen(
 private fun TrophyDetailsScreen(
     state: MainUiState,
     onBack: () -> Unit,
+    onSortChanged: (TrophySortOption) -> Unit,
 ) {
+    val trophySections = remember(state.trophies, state.trophySort) {
+        state.trophies.sectionsFor(state.trophySort)
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(20.dp),
@@ -508,10 +520,78 @@ private fun TrophyDetailsScreen(
                 EmptyStateCard("No trophies loaded for this title yet.")
             }
         } else {
-            items(state.trophies, key = { it.trophyId }) { trophy ->
-                TrophyCard(trophy = trophy)
+            item {
+                TrophySortBar(
+                    selected = state.trophySort,
+                    trophyCount = state.trophies.size,
+                    onSortChanged = onSortChanged,
+                )
+            }
+            trophySections.forEach { section ->
+                if (section.title != null) {
+                    item(key = "section-${section.title}") {
+                        TrophySectionHeader(
+                            title = section.title,
+                            count = section.trophies.size,
+                        )
+                    }
+                }
+                items(section.trophies, key = { "${section.title ?: "all"}-${it.trophyId}" }) { trophy ->
+                    TrophyCard(trophy = trophy)
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun TrophySortBar(
+    selected: TrophySortOption,
+    trophyCount: Int,
+    onSortChanged: (TrophySortOption) -> Unit,
+) {
+    Card {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Sort trophies", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "$trophyCount trophies",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TrophySortOption.entries.forEach { option ->
+                    FilterChip(
+                        selected = option == selected,
+                        onClick = { onSortChanged(option) },
+                        label = { Text(option.label) },
+                        colors = FilterChipDefaults.filterChipColors(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrophySectionHeader(
+    title: String,
+    count: Int,
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        Text(
+            "$count trophies",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -916,6 +996,37 @@ private fun CaptureGroupCard(
 
 @Composable
 private fun TrophyCard(trophy: TrophyEntry) {
+    val metaLine = remember(trophy) {
+        buildString {
+            append(trophy.trophyType ?: "Unknown")
+            trophy.earned?.let {
+                append(" • ")
+                append(if (it) "Earned" else "Not earned")
+            }
+            trophy.earnedRate?.let {
+                append(" • ")
+                append(it)
+                append("% earned")
+            }
+        }
+    }
+    val secondaryLine = remember(trophy) {
+        buildString {
+            trophy.earnedAt?.takeIf { it.isNotBlank() }?.let {
+                append("Earned ")
+                append(it)
+            }
+            trophy.progressRate?.let {
+                if (isNotEmpty()) {
+                    append(" • ")
+                }
+                append("Progress ")
+                append(it)
+                append("%")
+            }
+        }
+    }
+
     Card {
         Row(
             modifier = Modifier
@@ -939,21 +1050,15 @@ private fun TrophyCard(trophy: TrophyEntry) {
                     Text(detail, style = MaterialTheme.typography.bodyMedium)
                 }
                 Spacer(Modifier.height(6.dp))
-                Text(
-                    buildString {
-                        append(trophy.trophyType ?: "Unknown")
-                        trophy.earned?.let {
-                            append(" • ")
-                            append(if (it) "Earned" else "Not earned")
-                        }
-                        trophy.earnedRate?.let {
-                            append(" • ")
-                            append(it)
-                            append("%")
-                        }
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                Text(metaLine, style = MaterialTheme.typography.bodySmall)
+                if (secondaryLine.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        secondaryLine,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
@@ -1197,7 +1302,97 @@ private val CaptureEntry.captureTypeLabel: String
         else -> captureType?.replaceFirstChar { it.uppercase() } ?: "Capture"
     }
 
+private data class TrophySection(
+    val title: String?,
+    val trophies: List<TrophyEntry>,
+)
+
+private fun List<TrophyEntry>.sectionsFor(option: TrophySortOption): List<TrophySection> {
+    return when (option) {
+        TrophySortOption.Default -> listOf(TrophySection(title = null, trophies = this))
+        TrophySortOption.EarnedNewest -> buildList {
+            val recent7 = this@sectionsFor
+                .filter { it.earnedAt.daysSinceEarned()?.let { days -> days in 0..6 } == true }
+                .sortedByDescending { it.earnedAt.sortKey() }
+            if (recent7.isNotEmpty()) {
+                add(TrophySection("Earned in last 7 days", recent7))
+            }
+
+            val recent30 = this@sectionsFor
+                .filter { it.earnedAt.daysSinceEarned()?.let { days -> days in 7..29 } == true }
+                .sortedByDescending { it.earnedAt.sortKey() }
+            if (recent30.isNotEmpty()) {
+                add(TrophySection("Earned in last 30 days", recent30))
+            }
+
+            val older = this@sectionsFor
+                .filter { it.earnedAt.daysSinceEarned()?.let { days -> days >= 30 } == true }
+                .sortedByDescending { it.earnedAt.sortKey() }
+            if (older.isNotEmpty()) {
+                add(TrophySection("Earned more than 30 days ago", older))
+            }
+
+            val unknownEarnedDate = this@sectionsFor.filter {
+                it.earned == true && it.earnedAt?.isNotBlank() != false && it.earnedAt.daysSinceEarned() == null
+            }.sortedBy { it.name.orEmpty() }
+            if (unknownEarnedDate.isNotEmpty()) {
+                add(TrophySection("Earned date unavailable", unknownEarnedDate))
+            }
+
+            val notEarned = this@sectionsFor.filter { it.earned != true }.sortedBy { it.name.orEmpty() }
+            if (notEarned.isNotEmpty()) {
+                add(TrophySection("Not earned", notEarned))
+            }
+        }
+        TrophySortOption.NotEarnedFirst -> buildList {
+            val notEarned = this@sectionsFor.filter { it.earned != true }.sortedBy { it.name.orEmpty() }
+            if (notEarned.isNotEmpty()) {
+                add(TrophySection("Not earned", notEarned))
+            }
+
+            val earned = this@sectionsFor
+                .filter { it.earned == true }
+                .sortedWith(
+                    compareByDescending<TrophyEntry> { it.earnedAt.sortKey() }
+                        .thenBy { it.name.orEmpty() },
+                )
+            if (earned.isNotEmpty()) {
+                add(TrophySection("Earned", earned))
+            }
+        }
+        TrophySortOption.Rarity -> listOf(
+            TrophySection(
+                title = null,
+                trophies = sortedWith(
+                    compareBy<TrophyEntry> { it.earnedRate.raritySortKey() }
+                        .thenBy { it.rare ?: Int.MAX_VALUE }
+                        .thenBy { it.name.orEmpty() },
+                ),
+            ),
+        )
+    }
+}
+
 private fun String?.sortKey(): String = this ?: ""
+
+private fun String?.raritySortKey(): Float {
+    return this?.toFloatOrNull() ?: Float.MAX_VALUE
+}
+
+private fun String?.daysSinceEarned(now: Instant = Instant.now()): Long? {
+    val instant = this.toInstantOrNull() ?: return null
+    return ChronoUnit.DAYS.between(instant, now)
+}
+
+private fun String?.toInstantOrNull(): Instant? {
+    if (this.isNullOrBlank()) {
+        return null
+    }
+
+    return runCatching { Instant.parse(this) }.getOrNull()
+        ?: runCatching { OffsetDateTime.parse(this).toInstant() }.getOrNull()
+        ?: runCatching { ZonedDateTime.parse(this).toInstant() }.getOrNull()
+}
 
 private fun formatFileSize(bytes: Long): String {
     return when {
