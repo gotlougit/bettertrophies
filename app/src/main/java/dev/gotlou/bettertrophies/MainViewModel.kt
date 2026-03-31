@@ -3,6 +3,9 @@ package dev.gotlou.bettertrophies
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import dev.gotlou.bettertrophies.stationplayer.CloudMediaCapture
+import dev.gotlou.bettertrophies.stationplayer.CloudMediaCaptureGroup
+import dev.gotlou.bettertrophies.stationplayer.CloudMediaCaptureUrls
 import dev.gotlou.bettertrophies.stationplayer.MyInfo
 import dev.gotlou.bettertrophies.stationplayer.RecentPlayedTitle
 import dev.gotlou.bettertrophies.stationplayer.StationPlayer
@@ -11,7 +14,11 @@ import dev.gotlou.bettertrophies.stationplayer.TrophyDistributions
 import dev.gotlou.bettertrophies.stationplayer.UserGameTrophyInfo
 import dev.gotlou.bettertrophies.stationplayer.UserTrophySummary
 import dev.gotlou.bettertrophies.stationplayer.generateSignInUrl
+import java.net.HttpURLConnection
+import java.net.URL
 import java.security.MessageDigest
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,8 +26,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
 
 data class MainUiState(
     val npsso: String = "",
@@ -30,17 +35,23 @@ data class MainUiState(
     val signInUrl: String = "",
     val dashboard: DashboardSnapshot? = null,
     val trophies: List<TrophyEntry> = emptyList(),
+    val captureGroups: List<CaptureGroup> = emptyList(),
     val currentScreen: MainScreen = MainScreen.Dashboard,
     val selectedTitleId: String? = null,
     val selectedTitleName: String? = null,
+    val selectedCaptureGroupId: String? = null,
     val isLoading: Boolean = false,
     val isLoadingTrophies: Boolean = false,
+    val isLoadingCaptures: Boolean = false,
     val isShowingCachedDashboard: Boolean = false,
     val isRefreshingDashboard: Boolean = false,
     val dashboardCacheUpdatedAtEpochMs: Long? = null,
     val isShowingCachedTrophies: Boolean = false,
     val isRefreshingTrophies: Boolean = false,
     val trophiesCacheUpdatedAtEpochMs: Long? = null,
+    val isShowingCachedCaptures: Boolean = false,
+    val isRefreshingCaptures: Boolean = false,
+    val capturesCacheUpdatedAtEpochMs: Long? = null,
     val error: String? = null,
     val logLines: List<String> = emptyList(),
 )
@@ -49,6 +60,8 @@ enum class MainScreen {
     Dashboard,
     Games,
     TrophyDetail,
+    Captures,
+    CaptureDetail,
 }
 
 class MainViewModel(
@@ -59,6 +72,7 @@ class MainViewModel(
 
     private val tokenStore = NpssoTokenStore(application.applicationContext)
     private val cacheStore = AppServices.cacheStore
+    private val captureMediaStore = AppServices.captureMediaStore
     private var session: StationPlayer? = null
     private var storedNpsso: String? = null
     private var currentAccountKey: String? = null
@@ -74,13 +88,7 @@ class MainViewModel(
     }
 
     fun startStoredTokenEdit() {
-        _state.update {
-            it.copy(
-                npsso = "",
-                isEditingStoredNpsso = true,
-                error = null,
-            )
-        }
+        _state.update { it.copy(npsso = "", isEditingStoredNpsso = true, error = null) }
     }
 
     fun cancelStoredTokenEdit() {
@@ -98,7 +106,10 @@ class MainViewModel(
             val accountKeyToClear = currentAccountKey ?: storedNpsso?.let(::accountKeyForToken)
             runCatching { tokenStore.clearToken() }
                 .onSuccess {
-                    accountKeyToClear?.let(cacheStore::clearAccount)
+                    accountKeyToClear?.let {
+                        cacheStore.clearAccount(it)
+                        captureMediaStore.clearAccount(it)
+                    }
                     storedNpsso = null
                     currentAccountKey = null
                     session = null
@@ -110,17 +121,23 @@ class MainViewModel(
                             isEditingStoredNpsso = false,
                             dashboard = null,
                             trophies = emptyList(),
+                            captureGroups = emptyList(),
                             currentScreen = MainScreen.Dashboard,
                             selectedTitleId = null,
                             selectedTitleName = null,
+                            selectedCaptureGroupId = null,
                             isLoading = false,
                             isLoadingTrophies = false,
+                            isLoadingCaptures = false,
                             isShowingCachedDashboard = false,
                             isRefreshingDashboard = false,
                             dashboardCacheUpdatedAtEpochMs = null,
                             isShowingCachedTrophies = false,
                             isRefreshingTrophies = false,
                             trophiesCacheUpdatedAtEpochMs = null,
+                            isShowingCachedCaptures = false,
+                            isRefreshingCaptures = false,
+                            capturesCacheUpdatedAtEpochMs = null,
                             error = null,
                         )
                     }
@@ -143,8 +160,31 @@ class MainViewModel(
     }
 
     fun showGamesScreen() {
-        _state.update { state ->
-            if (state.dashboard == null) state else state.copy(currentScreen = MainScreen.Games, error = null)
+        _state.update { current ->
+            if (current.dashboard == null) current else current.copy(currentScreen = MainScreen.Games, error = null)
+        }
+    }
+
+    fun showCapturesScreen() {
+        _state.update {
+            it.copy(
+                currentScreen = MainScreen.Captures,
+                selectedCaptureGroupId = null,
+                error = null,
+            )
+        }
+        if (state.value.captureGroups.isEmpty() && !state.value.isRefreshingCaptures) {
+            loadCaptures()
+        }
+    }
+
+    fun openCaptureGroup(group: CaptureGroup) {
+        _state.update {
+            it.copy(
+                currentScreen = MainScreen.CaptureDetail,
+                selectedCaptureGroupId = group.titleId,
+                error = null,
+            )
         }
     }
 
@@ -157,8 +197,8 @@ class MainViewModel(
                 "Sign-in URL is available below the token field."
             },
         )
-        _state.update { state ->
-            state.copy(
+        _state.update {
+            it.copy(
                 error = if (signInUrl.isBlank()) {
                     "Rust bindings are not loaded yet. Run ./scripts/generate-bindings.sh and ./scripts/build-android-libs.sh before building the app."
                 } else {
@@ -186,13 +226,21 @@ class MainViewModel(
                         isLoading = true,
                         currentScreen = MainScreen.Dashboard,
                         dashboard = null,
+                        trophies = emptyList(),
+                        captureGroups = emptyList(),
+                        selectedTitleId = null,
+                        selectedTitleName = null,
+                        selectedCaptureGroupId = null,
                         isShowingCachedDashboard = false,
                         isRefreshingDashboard = false,
                         dashboardCacheUpdatedAtEpochMs = null,
+                        isShowingCachedTrophies = false,
+                        isRefreshingTrophies = false,
+                        trophiesCacheUpdatedAtEpochMs = null,
+                        isShowingCachedCaptures = false,
+                        isRefreshingCaptures = false,
+                        capturesCacheUpdatedAtEpochMs = null,
                         error = null,
-                        trophies = emptyList(),
-                        selectedTitleId = null,
-                        selectedTitleName = null,
                     )
                 }
             }
@@ -205,22 +253,6 @@ class MainViewModel(
 
                 appendLog("Fetching profile.")
                 val profile = activeSession.getProfile()
-                appendLog(
-                    buildString {
-                        append("Fetched ${profile.avatars.size} profile avatar candidate(s)")
-                        profile.avatars
-                            .mapNotNull { avatar ->
-                                avatar.url
-                                    .takeIf { it.isNotBlank() }
-                                    ?.let { "${avatar.size}=$it" }
-                            }
-                            .takeIf { it.isNotEmpty() }
-                            ?.let { avatars ->
-                                append(": ")
-                                append(avatars.joinToString())
-                            }
-                    },
-                )
                 appendLog("Fetching trophy summary.")
                 val summary = activeSession.trophySummary()
                 appendLog("Fetching all trophy titles.")
@@ -254,10 +286,15 @@ class MainViewModel(
                         dashboard = dashboard,
                         selectedTitleId = null,
                         selectedTitleName = null,
+                        selectedCaptureGroupId = null,
                         trophies = emptyList(),
+                        captureGroups = emptyList(),
                         isShowingCachedTrophies = false,
                         isRefreshingTrophies = false,
                         trophiesCacheUpdatedAtEpochMs = null,
+                        isShowingCachedCaptures = false,
+                        isRefreshingCaptures = false,
+                        capturesCacheUpdatedAtEpochMs = null,
                         error = null,
                     )
                 }
@@ -286,26 +323,10 @@ class MainViewModel(
             appendLog("Loading trophies for $titleName ($titleId).")
             val activeSession = session
             if (activeSession == null) {
-                if (cachedTrophies != null) {
-                    appendLog("Showing cached trophies for $titleName while the account reconnects.")
-                    _state.update {
-                        it.copy(
-                            isLoadingTrophies = false,
-                            isRefreshingTrophies = false,
-                        )
-                    }
-                } else {
-                    appendLog("Trophy load blocked because there is no active StationPlayer session.")
-                    _state.update {
-                        it.copy(
-                            isLoadingTrophies = false,
-                            isRefreshingTrophies = false,
-                            error = "Connect with an NPSSO token first.",
-                        )
-                    }
-                }
+                handleMissingSessionForTrophies(titleName, cachedTrophies != null)
                 return@launch
             }
+
             try {
                 StationPlayerLoader.load()
                 val trophies = activeSession.getAllTrophiesForTitleId(titleId).map(::mapTrophy)
@@ -323,18 +344,7 @@ class MainViewModel(
                     )
                 }
             } catch (error: Throwable) {
-                appendLog("Trophy load failed for $titleName: ${formatThrowable(error)}")
-                _state.update {
-                    it.copy(
-                        isLoadingTrophies = false,
-                        isRefreshingTrophies = false,
-                        error = if (cachedTrophies != null) {
-                            "Showing saved trophies. ${userFacingError(error, "Refresh failed.")}"
-                        } else {
-                            userFacingError(error, "Failed to load trophies.")
-                        },
-                    )
-                }
+                handleTrophyLoadFailure(error, cachedTrophies != null)
             }
         }
     }
@@ -342,7 +352,6 @@ class MainViewModel(
     fun loadTrophiesForGame(title: GameTitle) {
         val selectedId = title.id
         val requestLabel = title.npTitleId ?: "${title.communicationId} (${title.serviceName})"
-
         viewModelScope.launch(Dispatchers.IO) {
             val accountKey = currentAccountKey
             val cachedTrophies = accountKey?.let { cacheStore.readTrophies(it, selectedId) }
@@ -350,35 +359,16 @@ class MainViewModel(
             appendLog("Loading trophies for ${title.titleName} ($requestLabel).")
             val activeSession = session
             if (activeSession == null) {
-                if (cachedTrophies != null) {
-                    appendLog("Showing cached trophies for ${title.titleName} while the account reconnects.")
-                    _state.update {
-                        it.copy(
-                            isLoadingTrophies = false,
-                            isRefreshingTrophies = false,
-                        )
-                    }
-                } else {
-                    appendLog("Trophy load blocked because there is no active StationPlayer session.")
-                    _state.update {
-                        it.copy(
-                            isLoadingTrophies = false,
-                            isRefreshingTrophies = false,
-                            error = "Connect with an NPSSO token first.",
-                        )
-                    }
-                }
+                handleMissingSessionForTrophies(title.titleName, cachedTrophies != null)
                 return@launch
             }
+
             try {
                 StationPlayerLoader.load()
                 val trophies = if (title.npTitleId != null) {
                     activeSession.getAllTrophiesForTitleId(title.npTitleId)
                 } else {
-                    activeSession.getAllTrophiesForCommunicationId(
-                        title.communicationId,
-                        title.serviceName,
-                    )
+                    activeSession.getAllTrophiesForCommunicationId(title.communicationId, title.serviceName)
                 }.map(::mapTrophy)
                 val updatedAtEpochMs = System.currentTimeMillis()
                 accountKey?.let { cacheStore.writeTrophies(it, selectedId, trophies, updatedAtEpochMs) }
@@ -394,19 +384,203 @@ class MainViewModel(
                     )
                 }
             } catch (error: Throwable) {
-                appendLog("Trophy load failed for ${title.titleName}: ${formatThrowable(error)}")
+                handleTrophyLoadFailure(error, cachedTrophies != null)
+            }
+        }
+    }
+
+    private fun loadCaptures() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val accountKey = currentAccountKey
+            val cachedCaptures = accountKey?.let(cacheStore::readCaptureGroups)
+            showCaptureScreenWithCachedData(cachedCaptures)
+            appendLog("Loading cloud captures.")
+            val activeSession = session
+            if (activeSession == null) {
+                if (cachedCaptures != null) {
+                    _state.update { it.copy(isLoadingCaptures = false, isRefreshingCaptures = false) }
+                } else {
+                    _state.update {
+                        it.copy(
+                            isLoadingCaptures = false,
+                            isRefreshingCaptures = false,
+                            error = "Connect with an NPSSO token first.",
+                        )
+                    }
+                }
+                return@launch
+            }
+
+            try {
+                StationPlayerLoader.load()
+                val freshGroups = activeSession.getAllCloudMediaCaptureGroups().map(::mapCaptureGroup)
+                val mergedGroups = mergeCaptureGroups(freshGroups, cachedCaptures?.groups.orEmpty())
+                val updatedAtEpochMs = System.currentTimeMillis()
+                accountKey?.let { cacheStore.writeCaptureGroups(it, mergedGroups, updatedAtEpochMs) }
                 _state.update {
                     it.copy(
-                        isLoadingTrophies = false,
-                        isRefreshingTrophies = false,
-                        error = if (cachedTrophies != null) {
-                            "Showing saved trophies. ${userFacingError(error, "Refresh failed.")}"
+                        captureGroups = mergedGroups,
+                        isLoadingCaptures = false,
+                        isShowingCachedCaptures = false,
+                        isRefreshingCaptures = false,
+                        capturesCacheUpdatedAtEpochMs = updatedAtEpochMs,
+                        error = null,
+                    )
+                }
+                appendLog(
+                    "Loaded ${mergedGroups.sumOf { it.captures.size }} captures across ${mergedGroups.size} games.",
+                )
+                if (accountKey != null) {
+                    cacheCaptureMedia(accountKey, mergedGroups)
+                }
+            } catch (error: Throwable) {
+                _state.update {
+                    it.copy(
+                        isLoadingCaptures = false,
+                        isRefreshingCaptures = false,
+                        error = if (cachedCaptures != null) {
+                            "Showing saved captures. ${userFacingError(error, "Refresh failed.")}"
                         } else {
-                            userFacingError(error, "Failed to load trophies.")
+                            userFacingError(error, "Failed to load captures.")
                         },
                     )
                 }
             }
+        }
+    }
+
+    private fun cacheCaptureMedia(accountKey: String, groups: List<CaptureGroup>) {
+        val activeSession = session ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            groups.flatMap { it.captures }.forEach { capture ->
+                if (!capture.localThumbnailPath.isNullOrBlank() && !capture.localPrimaryAssetPath.isNullOrBlank()) {
+                    return@forEach
+                }
+
+                runCatching {
+                    val urls = activeSession.cloudMediaCaptureUrls(capture.ugcId)
+                    val updated = cacheCaptureAssets(activeSession, accountKey, capture, urls)
+                    if (updated != capture) {
+                        val updatedAtEpochMs = System.currentTimeMillis()
+                        cacheStore.upsertCapture(accountKey, updated, updatedAtEpochMs)
+                        _state.update { state ->
+                            state.copy(
+                                captureGroups = state.captureGroups.map { group ->
+                                    if (group.titleId != updated.titleId) group else group.copy(
+                                        captures = group.captures.map { existing ->
+                                            if (existing.ugcId == updated.ugcId) {
+                                                updated.copy(isCachedOnly = existing.isCachedOnly)
+                                            } else {
+                                                existing
+                                            }
+                                        },
+                                    )
+                                },
+                                capturesCacheUpdatedAtEpochMs = updatedAtEpochMs,
+                            )
+                        }
+                    }
+                }.onFailure { error ->
+                    appendLog("Capture asset cache failed for ${capture.ugcId}: ${formatThrowable(error)}")
+                }
+            }
+        }
+    }
+
+    private fun cacheCaptureAssets(
+        activeSession: StationPlayer,
+        accountKey: String,
+        capture: CaptureEntry,
+        urls: CloudMediaCaptureUrls,
+    ): CaptureEntry {
+        var updated = capture
+
+        if (capture.localThumbnailPath.isNullOrBlank()) {
+            val thumbnailUrl = urls.smallPreviewImage
+                ?: urls.largePreviewImage
+                ?: urls.screenshotUrl
+                ?: capture.thumbnailUrl
+            if (!thumbnailUrl.isNullOrBlank()) {
+                val downloaded = downloadUrl(thumbnailUrl)
+                val localPath = captureMediaStore.persistThumbnail(
+                    accountKey = accountKey,
+                    captureId = capture.ugcId,
+                    sourceUrl = thumbnailUrl,
+                    contentType = downloaded.contentType,
+                    bytes = downloaded.bytes,
+                )
+                updated = updated.copy(
+                    thumbnailUrl = updated.thumbnailUrl ?: thumbnailUrl,
+                    localThumbnailPath = localPath,
+                )
+            }
+        }
+
+        if (capture.localPrimaryAssetPath.isNullOrBlank()) {
+            val downloaded = activeSession.downloadCloudMediaCapture(capture.ugcId)
+            val bytes = downloaded.bytes
+            val localPath = captureMediaStore.persistPrimaryAsset(
+                accountKey = accountKey,
+                captureId = capture.ugcId,
+                fileName = downloaded.fileName,
+                contentType = downloaded.contentType,
+                bytes = bytes.toUByteArray().toByteArray(),
+            )
+            updated = updated.copy(
+                primaryAssetUrl = downloaded.sourceUrl,
+                localPrimaryAssetPath = localPath,
+                localPrimaryAssetContentType = downloaded.contentType,
+                localPrimaryAssetFileName = downloaded.fileName,
+            )
+        }
+
+        return updated
+    }
+
+    private fun downloadUrl(url: String): DownloadedUrl {
+        val connection = URL(url).openConnection() as HttpURLConnection
+        connection.instanceFollowRedirects = true
+        connection.connectTimeout = 15_000
+        connection.readTimeout = 30_000
+        connection.requestMethod = "GET"
+        connection.connect()
+        return try {
+            DownloadedUrl(
+                bytes = connection.inputStream.use { it.readBytes() },
+                contentType = connection.contentType?.ifBlank { null },
+            )
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun handleMissingSessionForTrophies(titleName: String, hasCache: Boolean) {
+        if (hasCache) {
+            appendLog("Showing cached trophies for $titleName while the account reconnects.")
+            _state.update { it.copy(isLoadingTrophies = false, isRefreshingTrophies = false) }
+        } else {
+            _state.update {
+                it.copy(
+                    isLoadingTrophies = false,
+                    isRefreshingTrophies = false,
+                    error = "Connect with an NPSSO token first.",
+                )
+            }
+        }
+    }
+
+    private fun handleTrophyLoadFailure(error: Throwable, hasCache: Boolean) {
+        appendLog("Trophy load failed: ${formatThrowable(error)}")
+        _state.update {
+            it.copy(
+                isLoadingTrophies = false,
+                isRefreshingTrophies = false,
+                error = if (hasCache) {
+                    "Showing saved trophies. ${userFacingError(error, "Refresh failed.")}"
+                } else {
+                    userFacingError(error, "Failed to load trophies.")
+                },
+            )
         }
     }
 
@@ -415,12 +589,9 @@ class MainViewModel(
             appendLog("Preparing stationplayer bindings.")
             try {
                 StationPlayerLoader.load()
-                appendLog("Native stationplayer library loaded.")
                 val signInUrl = generateSignInUrl(null)
-                appendLog("Generated sign-in URL.")
                 _state.update { it.copy(signInUrl = signInUrl, error = null) }
             } catch (error: Throwable) {
-                appendLog("StationPlayer initialization failed: ${formatThrowable(error)}")
                 _state.update {
                     it.copy(
                         error = "Rust bindings are not loaded yet. Run ./scripts/generate-bindings.sh and ./scripts/build-android-libs.sh before building the app.",
@@ -435,14 +606,12 @@ class MainViewModel(
             runCatching { tokenStore.readToken() }
                 .onSuccess { token ->
                     if (token.isNullOrBlank()) {
-                    appendLog("No stored NPSSO token found.")
-                    _state.update { it.copy(isRestoringStoredNpsso = false) }
-                    return@onSuccess
-                }
+                        _state.update { it.copy(isRestoringStoredNpsso = false) }
+                        return@onSuccess
+                    }
 
-                storedNpsso = token
-                currentAccountKey = accountKeyForToken(token)
-                appendLog("Restored a stored NPSSO token. Attempting automatic sign-in.")
+                    storedNpsso = token
+                    currentAccountKey = accountKeyForToken(token)
                     _state.update {
                         it.copy(
                             npsso = token,
@@ -456,7 +625,6 @@ class MainViewModel(
                     connect()
                 }
                 .onFailure { error ->
-                    appendLog("Failed to read the stored NPSSO token: ${formatThrowable(error)}")
                     _state.update {
                         it.copy(
                             isRestoringStoredNpsso = false,
@@ -476,16 +644,15 @@ class MainViewModel(
 
     private fun loadCachedDashboard(accountKey: String): Boolean {
         val cachedDashboard = cacheStore.readDashboard(accountKey) ?: return false
-        appendLog(
-            "Loaded cached dashboard updated at ${cachedDashboard.updatedAtEpochMs} for ${cachedDashboard.snapshot.profile.onlineId}.",
-        )
         _state.update {
             it.copy(
                 dashboard = cachedDashboard.snapshot,
                 currentScreen = MainScreen.Dashboard,
                 selectedTitleId = null,
                 selectedTitleName = null,
+                selectedCaptureGroupId = null,
                 trophies = emptyList(),
+                captureGroups = emptyList(),
                 isLoading = true,
                 isShowingCachedDashboard = true,
                 isRefreshingDashboard = true,
@@ -493,6 +660,9 @@ class MainViewModel(
                 isShowingCachedTrophies = false,
                 isRefreshingTrophies = false,
                 trophiesCacheUpdatedAtEpochMs = null,
+                isShowingCachedCaptures = false,
+                isRefreshingCaptures = false,
+                capturesCacheUpdatedAtEpochMs = null,
                 error = null,
             )
         }
@@ -517,9 +687,69 @@ class MainViewModel(
                 error = null,
             )
         }
-        if (cachedTrophies != null) {
-            appendLog("Loaded ${cachedTrophies.trophies.size} cached trophies for $titleName.")
+    }
+
+    private fun showCaptureScreenWithCachedData(cachedCaptures: CachedCaptureGroups?) {
+        _state.update {
+            it.copy(
+                currentScreen = MainScreen.Captures,
+                selectedCaptureGroupId = null,
+                captureGroups = cachedCaptures?.groups.orEmpty(),
+                isLoadingCaptures = cachedCaptures == null,
+                isShowingCachedCaptures = cachedCaptures != null,
+                isRefreshingCaptures = cachedCaptures != null,
+                capturesCacheUpdatedAtEpochMs = cachedCaptures?.updatedAtEpochMs,
+                error = null,
+            )
         }
+    }
+
+    private fun mergeCaptureGroups(
+        freshGroups: List<CaptureGroup>,
+        cachedGroups: List<CaptureGroup>,
+    ): List<CaptureGroup> {
+        val cachedById = cachedGroups.flatMap { it.captures }.associateBy(CaptureEntry::ugcId).toMutableMap()
+        val mergedCaptures = linkedMapOf<String, CaptureEntry>()
+
+        freshGroups.flatMap { it.captures }.forEach { fresh ->
+            val cached = cachedById.remove(fresh.ugcId)
+            mergedCaptures[fresh.ugcId] = fresh.copy(
+                description = fresh.description ?: cached?.description,
+                thumbnailUrl = fresh.thumbnailUrl ?: cached?.thumbnailUrl,
+                localThumbnailPath = existingPathOrNull(fresh.localThumbnailPath ?: cached?.localThumbnailPath),
+                primaryAssetUrl = fresh.primaryAssetUrl ?: cached?.primaryAssetUrl,
+                localPrimaryAssetPath = existingPathOrNull(fresh.localPrimaryAssetPath ?: cached?.localPrimaryAssetPath),
+                localPrimaryAssetContentType = fresh.localPrimaryAssetContentType ?: cached?.localPrimaryAssetContentType,
+                localPrimaryAssetFileName = fresh.localPrimaryAssetFileName ?: cached?.localPrimaryAssetFileName,
+                isCachedOnly = false,
+            )
+        }
+
+        cachedById.values.forEach { cached ->
+            mergedCaptures[cached.ugcId] = cached.copy(
+                localThumbnailPath = existingPathOrNull(cached.localThumbnailPath),
+                localPrimaryAssetPath = existingPathOrNull(cached.localPrimaryAssetPath),
+                isCachedOnly = true,
+            )
+        }
+
+        return mergedCaptures.values
+            .groupBy { it.titleId to it.titleName }
+            .map { (key, captures) ->
+                val latest = captures.maxByOrNull { it.uploadDate.orEmpty() }
+                CaptureGroup(
+                    titleId = key.first,
+                    titleName = key.second,
+                    conceptId = null,
+                    titleImageUrl = latest?.titleImageUrl,
+                    captures = captures.sortedByDescending { it.uploadDate.orEmpty() },
+                )
+            }
+            .sortedByDescending { it.latestUploadDate.orEmpty() }
+    }
+
+    private fun existingPathOrNull(path: String?): String? {
+        return path?.takeIf { captureMediaStore.resolve(it)?.exists() == true }
     }
 
     private fun accountKeyForToken(token: String): String {
@@ -533,7 +763,7 @@ class MainViewModel(
     }
 
     private fun formatThrowable(error: Throwable): String {
-        val chain = generateSequence(error) { it.cause }
+        return generateSequence(error) { it.cause }
             .map { throwable ->
                 val typeName = throwable::class.simpleName ?: throwable.javaClass.simpleName
                 val message = throwable.message?.takeIf { it.isNotBlank() }
@@ -544,8 +774,7 @@ class MainViewModel(
                 }
             }
             .distinct()
-            .toList()
-        return chain.joinToString(" -> ")
+            .joinToString(" -> ")
     }
 
     private fun mapProfile(profile: MyInfo): UserProfile {
@@ -620,7 +849,6 @@ class MainViewModel(
         val coverUrl = title.title.media.firstOrNull { media ->
             media.role.equals("MASTER", ignoreCase = true)
         }?.url ?: title.title.media.firstOrNull()?.url
-
         return RecentTitle(
             id = title.id,
             npTitleId = title.npTitleId,
@@ -651,6 +879,52 @@ class MainViewModel(
         )
     }
 
+    private fun mapCaptureGroup(group: CloudMediaCaptureGroup): CaptureGroup {
+        return CaptureGroup(
+            titleId = group.titleId,
+            titleName = group.titleName,
+            conceptId = group.conceptId,
+            titleImageUrl = group.titleImageUrl,
+            captures = group.captures.map {
+                mapCapture(group.titleId, group.titleName, group.titleImageUrl, it)
+            }.sortedByDescending { it.uploadDate.orEmpty() },
+        )
+    }
+
+    private fun mapCapture(
+        titleId: String,
+        titleName: String,
+        titleImageUrl: String?,
+        capture: CloudMediaCapture,
+    ): CaptureEntry {
+        return CaptureEntry(
+            ugcId = capture.id,
+            titleId = titleId,
+            titleName = titleName,
+            titleImageUrl = titleImageUrl,
+            uploadDate = capture.uploadDate,
+            captureType = capture.captureType,
+            description = capture.description,
+            fileType = capture.fileType,
+            resolution = capture.resolution,
+            fileSizeBytes = capture.fileSize?.toLong(),
+            videoDurationSeconds = capture.videoDuration?.toLong(),
+            platform = capture.scePlatform,
+            isSpoiler = capture.isSpoiler,
+            expireAt = capture.expireAt,
+            thumbnailUrl = capture.smallPreviewImage
+                ?: capture.largePreviewImage
+                ?: capture.streamingPreviewImage
+                ?: capture.screenshotUrl,
+            localThumbnailPath = null,
+            primaryAssetUrl = capture.screenshotUrl ?: capture.downloadUrl ?: capture.videoUrl,
+            localPrimaryAssetPath = null,
+            localPrimaryAssetContentType = null,
+            localPrimaryAssetFileName = null,
+            isCachedOnly = false,
+        )
+    }
+
     private fun mapTotals(totals: TrophyDistributions): TrophyTotals {
         return TrophyTotals(
             bronze = totals.bronze.toInt(),
@@ -659,4 +933,9 @@ class MainViewModel(
             platinum = totals.platinum.toInt(),
         )
     }
+
+    private data class DownloadedUrl(
+        val bytes: ByteArray,
+        val contentType: String?,
+    )
 }

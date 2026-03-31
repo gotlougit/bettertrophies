@@ -12,6 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -46,9 +47,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import dev.gotlou.bettertrophies.ui.theme.BetterTrophiesTheme
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
@@ -61,7 +64,9 @@ class MainActivity : ComponentActivity() {
                 override fun handleOnBackPressed() {
                     when (viewModel.state.value.currentScreen) {
                         MainScreen.Games -> viewModel.showDashboardScreen()
+                        MainScreen.Captures -> viewModel.showDashboardScreen()
                         MainScreen.TrophyDetail -> viewModel.showGamesScreen()
+                        MainScreen.CaptureDetail -> viewModel.showCapturesScreen()
                         MainScreen.Dashboard -> {
                             isEnabled = false
                             onBackPressedDispatcher.onBackPressed()
@@ -108,6 +113,7 @@ private fun BetterTrophiesScreen(viewModel: MainViewModel) {
                 onClearStoredToken = viewModel::clearStoredToken,
                 onClearLogs = viewModel::clearLogs,
                 onShowGames = viewModel::showGamesScreen,
+                onShowCaptures = viewModel::showCapturesScreen,
                 onOpenRecentTitle = { viewModel.loadTrophiesForTitle(it.npTitleId, it.titleName) },
             )
 
@@ -120,6 +126,17 @@ private fun BetterTrophiesScreen(viewModel: MainViewModel) {
             MainScreen.TrophyDetail -> TrophyDetailsScreen(
                 state = state,
                 onBack = viewModel::showGamesScreen,
+            )
+
+            MainScreen.Captures -> CapturesScreen(
+                state = state,
+                onBack = viewModel::showDashboardScreen,
+                onSelectGroup = viewModel::openCaptureGroup,
+            )
+
+            MainScreen.CaptureDetail -> CaptureDetailsScreen(
+                state = state,
+                onBack = viewModel::showCapturesScreen,
             )
         }
     }
@@ -135,6 +152,7 @@ private fun DashboardScreen(
     onClearStoredToken: () -> Unit,
     onClearLogs: () -> Unit,
     onShowGames: () -> Unit,
+    onShowCaptures: () -> Unit,
     onOpenRecentTitle: (RecentTitle) -> Unit,
 ) {
     val showAuthModule = state.isRestoringStoredNpsso || !state.hasStoredNpsso || state.isEditingStoredNpsso
@@ -198,6 +216,14 @@ private fun DashboardScreen(
                 )
             }
 
+            item {
+                CapturesEntryCard(
+                    totalCaptures = state.captureGroups.sumOf { it.captures.size },
+                    totalGames = state.captureGroups.size,
+                    onShowCaptures = onShowCaptures,
+                )
+            }
+
             if (dashboard.recentTitles.isNotEmpty()) {
                 item {
                     SectionTitle("Recent titles")
@@ -217,6 +243,141 @@ private fun DashboardScreen(
                     onReconnect = onConnect,
                     onResetSignIn = onClearStoredToken,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CapturesScreen(
+    state: MainUiState,
+    onBack: () -> Unit,
+    onSelectGroup: (CaptureGroup) -> Unit,
+) {
+    val captureGroups = state.captureGroups.sortedByDescending { group ->
+        group.captures.maxOfOrNull { it.uploadDate.sortKey() } ?: ""
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        item {
+            ScreenHeader(
+                title = "Captures",
+                subtitle = "${state.captureGroups.sumOf { it.captures.size }} captures across ${state.captureGroups.size} games",
+                actionLabel = "Back",
+                onAction = onBack,
+            )
+        }
+
+        if (state.error != null) {
+            item {
+                Text(
+                    text = state.error,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+
+        if (state.isShowingCachedCaptures || state.isRefreshingCaptures) {
+            item {
+                CacheStatusCard(
+                    title = "Showing saved captures",
+                    updatedAtEpochMs = state.capturesCacheUpdatedAtEpochMs,
+                    refreshing = state.isRefreshingCaptures,
+                )
+            }
+        }
+
+        if (state.isLoadingCaptures && captureGroups.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator()
+                }
+            }
+        } else if (captureGroups.isEmpty()) {
+            item {
+                EmptyStateCard("No captures loaded yet.")
+            }
+        } else {
+            items(captureGroups, key = { it.titleId }) { group ->
+                CaptureGroupCard(
+                    group = group,
+                    selected = state.selectedCaptureGroupId == group.titleId,
+                    onSelect = { onSelectGroup(group) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CaptureDetailsScreen(
+    state: MainUiState,
+    onBack: () -> Unit,
+) {
+    val selectedGroup = state.captureGroups.firstOrNull { it.titleId == state.selectedCaptureGroupId }
+    val captures = selectedGroup
+        ?.captures
+        ?.sortedByDescending { it.uploadDate.sortKey() }
+        .orEmpty()
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        item {
+            ScreenHeader(
+                title = selectedGroup?.titleName ?: "Capture details",
+                subtitle = "${captures.size} captures",
+                actionLabel = "Captures",
+                onAction = onBack,
+            )
+        }
+
+        if (state.error != null) {
+            item {
+                Text(
+                    text = state.error,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+
+        if (state.isShowingCachedCaptures || state.isRefreshingCaptures) {
+            item {
+                CacheStatusCard(
+                    title = "Showing saved captures",
+                    updatedAtEpochMs = state.capturesCacheUpdatedAtEpochMs,
+                    refreshing = state.isRefreshingCaptures,
+                )
+            }
+        }
+
+        if (state.isLoadingCaptures && captures.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator()
+                }
+            }
+        } else if (captures.isEmpty()) {
+            item {
+                EmptyStateCard("No captures are available for this game.")
+            }
+        } else {
+            items(captures, key = { it.ugcId }) { capture ->
+                CaptureCard(capture = capture)
             }
         }
     }
@@ -378,6 +539,29 @@ private fun GamesEntryCard(
             )
             Button(onClick = onShowGames) {
                 Text("View all games")
+            }
+        }
+    }
+}
+
+@Composable
+private fun CapturesEntryCard(
+    totalCaptures: Int,
+    totalGames: Int,
+    onShowCaptures: () -> Unit,
+) {
+    Card {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Captures", style = MaterialTheme.typography.titleLarge)
+            Text(
+                "Browse $totalCaptures recent captures grouped across $totalGames games, while older cached media stays visible from local storage.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Button(onClick = onShowCaptures) {
+                Text("View captures")
             }
         }
     }
@@ -640,6 +824,67 @@ private fun TrophyTitleCard(
 }
 
 @Composable
+private fun CaptureGroupCard(
+    group: CaptureGroup,
+    selected: Boolean,
+    onSelect: () -> Unit,
+) {
+    val latestCapture = group.captures.maxByOrNull { it.uploadDate.sortKey() }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onSelect)
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AsyncImage(
+                model = latestCapture?.thumbnailModel ?: group.titleImageUrl,
+                contentDescription = group.titleName,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(RoundedCornerShape(20.dp)),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(group.titleName, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "${group.captures.size} captures • ${latestCapture?.uploadDate ?: "Timestamp unavailable"}",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    buildString {
+                        append(latestCapture?.captureTypeLabel ?: "Capture")
+                        latestCapture?.resolution?.takeIf { it.isNotBlank() }?.let {
+                            append(" • ")
+                            append(it)
+                        }
+                        if (group.captures.any(CaptureEntry::isCachedOnly)) {
+                            append(" • Includes older saved captures")
+                        }
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun TrophyCard(trophy: TrophyEntry) {
     Card {
         Row(
@@ -681,6 +926,100 @@ private fun TrophyCard(trophy: TrophyEntry) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun CaptureCard(capture: CaptureEntry) {
+    Card {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            BoxWithConstraints {
+                AsyncImage(
+                    model = capture.previewModel,
+                    contentDescription = capture.description ?: capture.titleName,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(maxWidth * 9f / 16f)
+                        .clip(RoundedCornerShape(20.dp)),
+                )
+            }
+
+            Text(
+                text = capture.description?.takeIf { it.isNotBlank() } ?: capture.titleName,
+                style = MaterialTheme.typography.titleMedium,
+            )
+
+            Text(
+                buildString {
+                    append(capture.captureTypeLabel)
+                    capture.uploadDate?.takeIf { it.isNotBlank() }?.let {
+                        append(" • ")
+                        append(it)
+                    }
+                    capture.resolution?.takeIf { it.isNotBlank() }?.let {
+                        append(" • ")
+                        append(it)
+                    }
+                    capture.videoDurationSeconds?.let {
+                        append(" • ")
+                        append("${it}s")
+                    }
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
+
+            Text(
+                buildString {
+                    when {
+                        capture.localPrimaryAssetPath != null -> append("Saved full quality locally")
+                        capture.primaryAssetUrl != null -> append("Full quality available")
+                        else -> append("Preview only")
+                    }
+                    capture.fileSizeBytes?.let {
+                        append(" • ")
+                        append(formatFileSize(it))
+                    }
+                    if (capture.isCachedOnly) {
+                        append(" • Cached-only")
+                    }
+                    if (capture.isSpoiler == true) {
+                        append(" • Spoiler")
+                    }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+private val CaptureEntry.thumbnailModel: Any?
+    get() = localThumbnailPath?.let(::File) ?: thumbnailUrl
+
+private val CaptureEntry.previewModel: Any?
+    get() = localPrimaryAssetPath?.let(::File) ?: thumbnailModel ?: primaryAssetUrl
+
+private val CaptureEntry.captureTypeLabel: String
+    get() = when (captureType?.lowercase()) {
+        "video" -> "Video"
+        "screenshot" -> "Screenshot"
+        else -> captureType?.replaceFirstChar { it.uppercase() } ?: "Capture"
+    }
+
+private fun String?.sortKey(): String = this ?: ""
+
+private fun formatFileSize(bytes: Long): String {
+    return when {
+        bytes < 1024L -> "$bytes B"
+        bytes < 1024L * 1024L -> "${bytes / 1024L} KB"
+        bytes < 1024L * 1024L * 1024L -> "${bytes / (1024L * 1024L)} MB"
+        else -> "${bytes / (1024L * 1024L * 1024L)} GB"
     }
 }
 

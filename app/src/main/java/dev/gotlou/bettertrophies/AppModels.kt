@@ -67,6 +67,41 @@ data class TrophyEntry(
     val earnedRate: String?,
 )
 
+data class CaptureEntry(
+    val ugcId: String,
+    val titleId: String,
+    val titleName: String,
+    val titleImageUrl: String?,
+    val uploadDate: String?,
+    val captureType: String?,
+    val description: String?,
+    val fileType: String?,
+    val resolution: String?,
+    val fileSizeBytes: Long?,
+    val videoDurationSeconds: Long?,
+    val platform: String?,
+    val isSpoiler: Boolean?,
+    val expireAt: String?,
+    val thumbnailUrl: String?,
+    val localThumbnailPath: String?,
+    val primaryAssetUrl: String?,
+    val localPrimaryAssetPath: String?,
+    val localPrimaryAssetContentType: String?,
+    val localPrimaryAssetFileName: String?,
+    val isCachedOnly: Boolean,
+)
+
+data class CaptureGroup(
+    val titleId: String,
+    val titleName: String,
+    val conceptId: String?,
+    val titleImageUrl: String?,
+    val captures: List<CaptureEntry>,
+) {
+    val latestUploadDate: String?
+        get() = captures.maxOfOrNull { it.uploadDate.orEmpty() }.takeIf { !it.isNullOrBlank() }
+}
+
 data class DashboardSnapshot(
     val profile: UserProfile,
     val summary: TrophySummaryRecord,

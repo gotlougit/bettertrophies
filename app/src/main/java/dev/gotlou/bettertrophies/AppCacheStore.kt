@@ -17,6 +17,11 @@ data class CachedTrophyEntries(
     val updatedAtEpochMs: Long,
 )
 
+data class CachedCaptureGroups(
+    val groups: List<CaptureGroup>,
+    val updatedAtEpochMs: Long,
+)
+
 class AppCacheStore(
     context: Context,
 ) {
@@ -37,11 +42,9 @@ class AppCacheStore(
                 return null
             }
 
-            val payloadJson = cursor.getString(0)
-            val updatedAtEpochMs = cursor.getLong(1)
             return CachedDashboardSnapshot(
-                snapshot = deserializeDashboardSnapshot(payloadJson),
-                updatedAtEpochMs = updatedAtEpochMs,
+                snapshot = deserializeDashboardSnapshot(cursor.getString(0)),
+                updatedAtEpochMs = cursor.getLong(1),
             )
         }
     }
@@ -79,11 +82,9 @@ class AppCacheStore(
                 return null
             }
 
-            val payloadJson = cursor.getString(0)
-            val updatedAtEpochMs = cursor.getLong(1)
             return CachedTrophyEntries(
-                trophies = deserializeTrophyEntries(payloadJson),
-                updatedAtEpochMs = updatedAtEpochMs,
+                trophies = deserializeTrophyEntries(cursor.getString(0)),
+                updatedAtEpochMs = cursor.getLong(1),
             )
         }
     }
@@ -108,17 +109,138 @@ class AppCacheStore(
         )
     }
 
+    fun readCaptureGroups(accountKey: String): CachedCaptureGroups? {
+        val database = databaseHelper.readableDatabase
+        val updatedAtEpochMs = database.query(
+            CAPTURE_SYNC_TABLE,
+            arrayOf(COLUMN_UPDATED_AT),
+            "$COLUMN_ACCOUNT_KEY = ?",
+            arrayOf(accountKey),
+            null,
+            null,
+            null,
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) {
+                return null
+            }
+            cursor.getLong(0)
+        }
+
+        val captures = mutableListOf<CaptureEntry>()
+        database.query(
+            CAPTURE_TABLE,
+            arrayOf(COLUMN_PAYLOAD_JSON),
+            "$COLUMN_ACCOUNT_KEY = ?",
+            arrayOf(accountKey),
+            null,
+            null,
+            null,
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                captures += deserializeCaptureEntry(cursor.getString(0))
+            }
+        }
+
+        if (captures.isEmpty()) {
+            return null
+        }
+
+        return CachedCaptureGroups(
+            groups = buildCaptureGroups(captures),
+            updatedAtEpochMs = updatedAtEpochMs,
+        )
+    }
+
+    fun writeCaptureGroups(
+        accountKey: String,
+        groups: List<CaptureGroup>,
+        updatedAtEpochMs: Long,
+    ) {
+        val database = databaseHelper.writableDatabase
+        database.beginTransaction()
+        try {
+            groups.forEach { group ->
+                group.captures.forEach { capture ->
+                    upsertCaptureInternal(
+                        database = database,
+                        accountKey = accountKey,
+                        capture = capture.copy(isCachedOnly = false),
+                        updatedAtEpochMs = updatedAtEpochMs,
+                    )
+                }
+            }
+            writeCaptureSyncInternal(database, accountKey, updatedAtEpochMs)
+            database.setTransactionSuccessful()
+        } finally {
+            database.endTransaction()
+        }
+    }
+
+    fun upsertCapture(
+        accountKey: String,
+        capture: CaptureEntry,
+        updatedAtEpochMs: Long,
+    ) {
+        val database = databaseHelper.writableDatabase
+        database.beginTransaction()
+        try {
+            upsertCaptureInternal(database, accountKey, capture.copy(isCachedOnly = false), updatedAtEpochMs)
+            writeCaptureSyncInternal(database, accountKey, updatedAtEpochMs)
+            database.setTransactionSuccessful()
+        } finally {
+            database.endTransaction()
+        }
+    }
+
     fun clearAccount(accountKey: String) {
-        databaseHelper.writableDatabase.delete(
-            DASHBOARD_TABLE,
-            "$COLUMN_ACCOUNT_KEY = ?",
-            arrayOf(accountKey),
-        )
-        databaseHelper.writableDatabase.delete(
-            TROPHY_TABLE,
-            "$COLUMN_ACCOUNT_KEY = ?",
-            arrayOf(accountKey),
-        )
+        val database = databaseHelper.writableDatabase
+        database.delete(DASHBOARD_TABLE, "$COLUMN_ACCOUNT_KEY = ?", arrayOf(accountKey))
+        database.delete(TROPHY_TABLE, "$COLUMN_ACCOUNT_KEY = ?", arrayOf(accountKey))
+        database.delete(CAPTURE_SYNC_TABLE, "$COLUMN_ACCOUNT_KEY = ?", arrayOf(accountKey))
+        database.delete(CAPTURE_TABLE, "$COLUMN_ACCOUNT_KEY = ?", arrayOf(accountKey))
+    }
+
+    private fun upsertCaptureInternal(
+        database: SQLiteDatabase,
+        accountKey: String,
+        capture: CaptureEntry,
+        updatedAtEpochMs: Long,
+    ) {
+        val values = ContentValues().apply {
+            put(COLUMN_ACCOUNT_KEY, accountKey)
+            put(COLUMN_UGC_ID, capture.ugcId)
+            put(COLUMN_PAYLOAD_JSON, serializeCaptureEntry(capture))
+            put(COLUMN_UPDATED_AT, updatedAtEpochMs)
+        }
+        database.insertWithOnConflict(CAPTURE_TABLE, null, values, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    private fun writeCaptureSyncInternal(
+        database: SQLiteDatabase,
+        accountKey: String,
+        updatedAtEpochMs: Long,
+    ) {
+        val values = ContentValues().apply {
+            put(COLUMN_ACCOUNT_KEY, accountKey)
+            put(COLUMN_UPDATED_AT, updatedAtEpochMs)
+        }
+        database.insertWithOnConflict(CAPTURE_SYNC_TABLE, null, values, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    private fun buildCaptureGroups(captures: List<CaptureEntry>): List<CaptureGroup> {
+        return captures
+            .groupBy { it.titleId to it.titleName }
+            .map { (key, groupedCaptures) ->
+                val latest = groupedCaptures.maxByOrNull { it.uploadDate.orEmpty() }
+                CaptureGroup(
+                    titleId = key.first,
+                    titleName = key.second,
+                    conceptId = null,
+                    titleImageUrl = latest?.titleImageUrl,
+                    captures = groupedCaptures.sortedByDescending { it.uploadDate.orEmpty() },
+                )
+            }
+            .sortedByDescending { it.latestUploadDate.orEmpty() }
     }
 
     private fun serializeDashboardSnapshot(snapshot: DashboardSnapshot): String {
@@ -310,6 +432,58 @@ class AppCacheStore(
         }
     }
 
+    private fun serializeCaptureEntry(capture: CaptureEntry): String {
+        return JSONObject()
+            .put("ugcId", capture.ugcId)
+            .put("titleId", capture.titleId)
+            .put("titleName", capture.titleName)
+            .put("titleImageUrl", capture.titleImageUrl)
+            .put("uploadDate", capture.uploadDate)
+            .put("captureType", capture.captureType)
+            .put("description", capture.description)
+            .put("fileType", capture.fileType)
+            .put("resolution", capture.resolution)
+            .put("fileSizeBytes", capture.fileSizeBytes)
+            .put("videoDurationSeconds", capture.videoDurationSeconds)
+            .put("platform", capture.platform)
+            .put("isSpoiler", capture.isSpoiler)
+            .put("expireAt", capture.expireAt)
+            .put("thumbnailUrl", capture.thumbnailUrl)
+            .put("localThumbnailPath", capture.localThumbnailPath)
+            .put("primaryAssetUrl", capture.primaryAssetUrl)
+            .put("localPrimaryAssetPath", capture.localPrimaryAssetPath)
+            .put("localPrimaryAssetContentType", capture.localPrimaryAssetContentType)
+            .put("localPrimaryAssetFileName", capture.localPrimaryAssetFileName)
+            .toString()
+    }
+
+    private fun deserializeCaptureEntry(json: String): CaptureEntry {
+        val item = JSONObject(json)
+        return CaptureEntry(
+            ugcId = item.getString("ugcId"),
+            titleId = item.getString("titleId"),
+            titleName = item.getString("titleName"),
+            titleImageUrl = item.optNullableString("titleImageUrl"),
+            uploadDate = item.optNullableString("uploadDate"),
+            captureType = item.optNullableString("captureType"),
+            description = item.optNullableString("description"),
+            fileType = item.optNullableString("fileType"),
+            resolution = item.optNullableString("resolution"),
+            fileSizeBytes = item.optNullableLong("fileSizeBytes"),
+            videoDurationSeconds = item.optNullableLong("videoDurationSeconds"),
+            platform = item.optNullableString("platform"),
+            isSpoiler = item.optNullableBoolean("isSpoiler"),
+            expireAt = item.optNullableString("expireAt"),
+            thumbnailUrl = item.optNullableString("thumbnailUrl"),
+            localThumbnailPath = item.optNullableString("localThumbnailPath"),
+            primaryAssetUrl = item.optNullableString("primaryAssetUrl"),
+            localPrimaryAssetPath = item.optNullableString("localPrimaryAssetPath"),
+            localPrimaryAssetContentType = item.optNullableString("localPrimaryAssetContentType"),
+            localPrimaryAssetFileName = item.optNullableString("localPrimaryAssetFileName"),
+            isCachedOnly = false,
+        )
+    }
+
     private fun JSONArray.toGameTitles(): List<GameTitle> {
         return buildList(length()) {
             repeat(length()) { index ->
@@ -335,23 +509,22 @@ class AppCacheStore(
     }
 
     private fun JSONObject.optNullableString(key: String): String? {
-        if (!has(key) || isNull(key)) {
-            return null
-        }
+        if (!has(key) || isNull(key)) return null
         return getString(key)
     }
 
     private fun JSONObject.optNullableInt(key: String): Int? {
-        if (!has(key) || isNull(key)) {
-            return null
-        }
+        if (!has(key) || isNull(key)) return null
         return getInt(key)
     }
 
+    private fun JSONObject.optNullableLong(key: String): Long? {
+        if (!has(key) || isNull(key)) return null
+        return getLong(key)
+    }
+
     private fun JSONObject.optNullableBoolean(key: String): Boolean? {
-        if (!has(key) || isNull(key)) {
-            return null
-        }
+        if (!has(key) || isNull(key)) return null
         return getBoolean(key)
     }
 
@@ -379,22 +552,46 @@ class AppCacheStore(
                 )
                 """.trimIndent(),
             )
+            db.execSQL(
+                """
+                CREATE TABLE $CAPTURE_SYNC_TABLE (
+                    $COLUMN_ACCOUNT_KEY TEXT PRIMARY KEY NOT NULL,
+                    $COLUMN_UPDATED_AT INTEGER NOT NULL
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE TABLE $CAPTURE_TABLE (
+                    $COLUMN_ACCOUNT_KEY TEXT NOT NULL,
+                    $COLUMN_UGC_ID TEXT NOT NULL,
+                    $COLUMN_PAYLOAD_JSON TEXT NOT NULL,
+                    $COLUMN_UPDATED_AT INTEGER NOT NULL,
+                    PRIMARY KEY ($COLUMN_ACCOUNT_KEY, $COLUMN_UGC_ID)
+                )
+                """.trimIndent(),
+            )
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             db.execSQL("DROP TABLE IF EXISTS $DASHBOARD_TABLE")
             db.execSQL("DROP TABLE IF EXISTS $TROPHY_TABLE")
+            db.execSQL("DROP TABLE IF EXISTS $CAPTURE_SYNC_TABLE")
+            db.execSQL("DROP TABLE IF EXISTS $CAPTURE_TABLE")
             onCreate(db)
         }
     }
 
     private companion object {
         const val DATABASE_NAME = "app-cache.db"
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 2
         const val DASHBOARD_TABLE = "dashboard_cache"
         const val TROPHY_TABLE = "trophy_cache"
+        const val CAPTURE_SYNC_TABLE = "capture_sync"
+        const val CAPTURE_TABLE = "capture_cache"
         const val COLUMN_ACCOUNT_KEY = "account_key"
         const val COLUMN_TITLE_ID = "title_id"
+        const val COLUMN_UGC_ID = "ugc_id"
         const val COLUMN_PAYLOAD_JSON = "payload_json"
         const val COLUMN_UPDATED_AT = "updated_at"
     }
