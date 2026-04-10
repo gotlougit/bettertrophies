@@ -47,6 +47,10 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material.pullrefresh.PullRefreshIndicator
+import androidx.compose.material.pullrefresh.pullRefresh
+import androidx.compose.material.pullrefresh.rememberPullRefreshState
+import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -138,6 +142,7 @@ private fun BetterTrophiesScreen(viewModel: MainViewModel) {
                 state = state,
                 onNpssoChanged = viewModel::updateNpsso,
                 onConnect = viewModel::connect,
+                onRefresh = viewModel::refreshDashboard,
                 onPasteSignInUrl = viewModel::useSignInUrl,
                 onCancelStoredTokenEdit = viewModel::cancelStoredTokenEdit,
                 onClearStoredToken = viewModel::clearStoredToken,
@@ -173,11 +178,13 @@ private fun BetterTrophiesScreen(viewModel: MainViewModel) {
     }
 }
 
+@OptIn(ExperimentalMaterialApi::class)
 @Composable
 private fun DashboardScreen(
     state: MainUiState,
     onNpssoChanged: (String) -> Unit,
     onConnect: () -> Unit,
+    onRefresh: () -> Unit,
     onPasteSignInUrl: () -> Unit,
     onCancelStoredTokenEdit: () -> Unit,
     onClearStoredToken: () -> Unit,
@@ -187,95 +194,107 @@ private fun DashboardScreen(
     onOpenRecentTitle: (RecentTitle) -> Unit,
 ) {
     val showAuthModule = state.isRestoringStoredNpsso || !state.hasStoredNpsso || state.isEditingStoredNpsso
+    val pullRefreshState = rememberPullRefreshState(
+        refreshing = state.isRefreshingDashboard,
+        onRefresh = onRefresh,
+    )
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pullRefresh(pullRefreshState),
     ) {
-        if (showAuthModule) {
-            item {
-                AuthDashboardSection(
-                    state = state,
-                    onNpssoChanged = onNpssoChanged,
-                    onConnect = onConnect,
-                    onPasteSignInUrl = onPasteSignInUrl,
-                    onCancelStoredTokenEdit = onCancelStoredTokenEdit,
-                    onClearLogs = onClearLogs,
-                )
-            }
-        }
-
-        val dashboard = state.dashboard
-        if (dashboard != null) {
-            item {
-                CacheStatusCard(
-                    title = if (state.isShowingCachedDashboard) "Showing saved dashboard" else "Dashboard loaded",
-                    updatedAtEpochMs = state.dashboardCacheUpdatedAtEpochMs,
-                    refreshing = state.isRefreshingDashboard,
-                )
-            }
-
-            item {
-                ProfileHeader(
-                    avatarUrl = dashboard.profile.avatarUrl,
-                    onlineId = dashboard.profile.onlineId,
-                    realName = listOfNotNull(
-                        dashboard.profile.firstName,
-                        dashboard.profile.lastName,
-                    ).joinToString(" ").ifBlank { null },
-                    about = dashboard.profile.aboutMe,
-                )
-            }
-
-            item {
-                SummaryCard(
-                    level = dashboard.summary.trophyLevel.toString(),
-                    points = dashboard.summary.trophyPoints.toString(),
-                    progress = dashboard.summary.progress.toString(),
-                    bronze = dashboard.summary.earnedTrophies.bronze.toString(),
-                    silver = dashboard.summary.earnedTrophies.silver.toString(),
-                    gold = dashboard.summary.earnedTrophies.gold.toString(),
-                    platinum = dashboard.summary.earnedTrophies.platinum.toString(),
-                )
-            }
-
-            item {
-                GamesEntryCard(
-                    totalGames = dashboard.trophyTitles.size,
-                    onShowGames = onShowGames,
-                )
-            }
-
-            item {
-                CapturesEntryCard(
-                    totalCaptures = state.captureGroups.sumOf { it.captures.size },
-                    totalGames = state.captureGroups.size,
-                    onShowCaptures = onShowCaptures,
-                )
-            }
-
-            if (dashboard.recentTitles.isNotEmpty()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            if (showAuthModule) {
                 item {
-                    SectionTitle("Recent titles")
-                }
-                item {
-                    RecentTitlesRow(
-                        titles = dashboard.recentTitles,
-                        onSelect = onOpenRecentTitle,
+                    AuthDashboardSection(
+                        state = state,
+                        onNpssoChanged = onNpssoChanged,
+                        onConnect = onConnect,
+                        onPasteSignInUrl = onPasteSignInUrl,
+                        onCancelStoredTokenEdit = onCancelStoredTokenEdit,
+                        onClearLogs = onClearLogs,
                     )
                 }
             }
-        } else if (state.hasStoredNpsso && !state.isEditingStoredNpsso) {
-            item {
-                StoredSessionStatusCard(
-                    loading = state.isLoading,
-                    error = state.error,
-                    onReconnect = onConnect,
-                    onResetSignIn = onClearStoredToken,
-                )
+
+            val dashboard = state.dashboard
+            if (dashboard != null) {
+                item {
+                    ProfileHeader(
+                        avatarUrl = dashboard.profile.avatarUrl,
+                        onlineId = dashboard.profile.onlineId,
+                        realName = listOfNotNull(
+                            dashboard.profile.firstName,
+                            dashboard.profile.lastName,
+                        ).joinToString(" ").ifBlank { null },
+                        about = dashboard.profile.aboutMe,
+                    )
+                }
+
+                item {
+                    SummaryCard(
+                        level = dashboard.summary.trophyLevel.toString(),
+                        points = dashboard.summary.trophyPoints.toString(),
+                        progress = dashboard.summary.progress.toString(),
+                        bronze = dashboard.summary.earnedTrophies.bronze.toString(),
+                        silver = dashboard.summary.earnedTrophies.silver.toString(),
+                        gold = dashboard.summary.earnedTrophies.gold.toString(),
+                        platinum = dashboard.summary.earnedTrophies.platinum.toString(),
+                    )
+                }
+
+                item {
+                    GamesEntryCard(
+                        totalGames = dashboard.trophyTitles.size,
+                        onShowGames = onShowGames,
+                    )
+                }
+
+                item {
+                    CapturesEntryCard(
+                        totalCaptures = state.captureGroups.sumOf { it.captures.size },
+                        totalGames = state.captureGroups.size,
+                        onShowCaptures = onShowCaptures,
+                    )
+                }
+
+                if (dashboard.recentTitles.isNotEmpty()) {
+                    item {
+                        SectionTitle("Recent titles")
+                    }
+                    item {
+                        RecentTitlesRow(
+                            titles = dashboard.recentTitles,
+                            onSelect = onOpenRecentTitle,
+                        )
+                    }
+                }
+            } else if (state.hasStoredNpsso && !state.isEditingStoredNpsso) {
+                item {
+                    StoredSessionStatusCard(
+                        loading = state.isLoading,
+                        error = state.error,
+                        onReconnect = onConnect,
+                        onResetSignIn = onClearStoredToken,
+                    )
+                }
             }
         }
+
+        PullRefreshIndicator(
+            refreshing = state.isRefreshingDashboard,
+            state = pullRefreshState,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 20.dp),
+            backgroundColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = MaterialTheme.colorScheme.primary,
+        )
     }
 }
 

@@ -160,6 +160,29 @@ class MainViewModel(
         _state.update { it.copy(currentScreen = MainScreen.Dashboard, error = null) }
     }
 
+    fun refreshDashboard() {
+        val current = state.value
+        if (
+            current.isLoading ||
+            current.isRefreshingDashboard ||
+            current.isEditingStoredNpsso ||
+            current.isRestoringStoredNpsso
+        ) {
+            return
+        }
+
+        val token = current.npsso.ifBlank { storedNpsso.orEmpty() }.trim()
+        if (token.isBlank()) {
+            _state.update { it.copy(error = "Connect with an NPSSO token first.") }
+            return
+        }
+
+        if (current.npsso != token) {
+            _state.update { it.copy(npsso = token, error = null) }
+        }
+        connect()
+    }
+
     fun showGamesScreen() {
         _state.update { current ->
             if (current.dashboard == null) current else current.copy(currentScreen = MainScreen.Games, error = null)
