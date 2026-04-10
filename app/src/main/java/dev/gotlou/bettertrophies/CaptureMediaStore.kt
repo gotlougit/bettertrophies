@@ -56,7 +56,17 @@ class CaptureMediaStore(
         if (relativePath.isNullOrBlank()) {
             return null
         }
-        return File(relativePath)
+
+        return runCatching {
+            val resolvedFile = File(relativePath).canonicalFile
+            val cacheRoot = rootDirectory.canonicalFile
+            val cacheRootPath = "${cacheRoot.path}${File.separator}"
+            if (resolvedFile.path == cacheRoot.path || resolvedFile.path.startsWith(cacheRootPath)) {
+                resolvedFile
+            } else {
+                null
+            }
+        }.getOrNull()
     }
 
     fun clearAccount(accountKey: String) {

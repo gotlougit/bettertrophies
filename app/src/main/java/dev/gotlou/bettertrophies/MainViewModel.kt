@@ -27,6 +27,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+private val tokenKeyValueRegex = Regex("(?i)(npsso\\s*[=:]\\s*)([^\\s,;]+)")
+private val bearerTokenRegex = Regex("(?i)(authorization\\s*[:=]\\s*bearer\\s+)([^\\s,;]+)")
+private val cookieRegex = Regex("(?i)(cookie\\s*[:=]\\s*)([^\\r\\n]+)")
+
 data class MainUiState(
     val npsso: String = "",
     val hasStoredNpsso: Boolean = false,
@@ -96,7 +100,7 @@ class MainViewModel(
     fun cancelStoredTokenEdit() {
         _state.update {
             it.copy(
-                npsso = storedNpsso.orEmpty(),
+                npsso = "",
                 isEditingStoredNpsso = false,
                 error = null,
             )
@@ -173,14 +177,10 @@ class MainViewModel(
             return
         }
 
-        val token = current.npsso.ifBlank { storedNpsso.orEmpty() }.trim()
-        if (token.isBlank()) {
+        val hasToken = current.npsso.isNotBlank() || (!current.isEditingStoredNpsso && !storedNpsso.isNullOrBlank())
+        if (!hasToken) {
             _state.update { it.copy(error = "Connect with an NPSSO token first.") }
             return
-        }
-
-        if (current.npsso != token) {
-            _state.update { it.copy(npsso = token, error = null) }
         }
         connect()
     }
@@ -239,7 +239,13 @@ class MainViewModel(
     }
 
     fun connect() {
-        val token = state.value.npsso.trim()
+        val currentState = state.value
+        val enteredToken = currentState.npsso.trim()
+        val token = when {
+            enteredToken.isNotBlank() -> enteredToken
+            !currentState.isEditingStoredNpsso -> storedNpsso.orEmpty().trim()
+            else -> ""
+        }
         if (token.isBlank()) {
             appendLog("Connect blocked because the NPSSO field is empty.")
             _state.update { it.copy(error = "Enter an NPSSO token.") }
@@ -307,7 +313,7 @@ class MainViewModel(
                 )
                 _state.update {
                     it.copy(
-                        npsso = token,
+                        npsso = "",
                         hasStoredNpsso = true,
                         isEditingStoredNpsso = false,
                         isLoading = false,
@@ -651,7 +657,7 @@ class MainViewModel(
                     currentAccountKey = accountKeyForToken(token)
                     _state.update {
                         it.copy(
-                            npsso = token,
+                            npsso = "",
                             hasStoredNpsso = true,
                             isEditingStoredNpsso = false,
                             isRestoringStoredNpsso = false,
@@ -810,7 +816,9 @@ class MainViewModel(
         return generateSequence(error) { it.cause }
             .map { throwable ->
                 val typeName = throwable::class.simpleName ?: throwable.javaClass.simpleName
-                val message = throwable.message?.takeIf { it.isNotBlank() }
+                val message = throwable.message
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let(::redactSensitiveData)
                 when {
                     message == null -> typeName
                     message.equals(typeName, ignoreCase = true) -> message
@@ -819,6 +827,13 @@ class MainViewModel(
             }
             .distinct()
             .joinToString(" -> ")
+    }
+
+    private fun redactSensitiveData(input: String): String {
+        return input
+            .replace(tokenKeyValueRegex, "$1<redacted>")
+            .replace(bearerTokenRegex, "$1<redacted>")
+            .replace(cookieRegex, "$1<redacted>")
     }
 
     private fun mapProfile(profile: MyInfo): UserProfile {
