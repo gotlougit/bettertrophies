@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.text.format.DateFormat
 import android.text.format.DateUtils
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -70,9 +71,14 @@ import coil.compose.AsyncImage
 import dev.gotlou.bettertrophies.ui.theme.BetterTrophiesTheme
 import java.io.File
 import java.time.Instant
+import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.time.ZoneId
 import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
+import java.util.Locale
+import java.util.TimeZone
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -280,7 +286,7 @@ private fun CapturesScreen(
     onSelectGroup: (CaptureGroup) -> Unit,
 ) {
     val captureGroups = state.captureGroups.sortedByDescending { group ->
-        group.captures.maxOfOrNull { it.uploadDate.sortKey() } ?: ""
+        group.captures.maxOfOrNull { it.uploadDate.sortEpochMillis() }
     }
 
     LazyColumn(
@@ -350,7 +356,7 @@ private fun CaptureDetailsScreen(
     val selectedGroup = state.captureGroups.firstOrNull { it.titleId == state.selectedCaptureGroupId }
     val captures = selectedGroup
         ?.captures
-        ?.sortedByDescending { it.uploadDate.sortKey() }
+        ?.sortedByDescending { it.uploadDate.sortEpochMillis() }
         .orEmpty()
     var selectedCaptureId by remember(state.selectedCaptureGroupId) { mutableStateOf<String?>(null) }
     val selectedCapture = captures.firstOrNull { it.ugcId == selectedCaptureId }
@@ -939,7 +945,7 @@ private fun CaptureGroupCard(
     selected: Boolean,
     onSelect: () -> Unit,
 ) {
-    val latestCapture = group.captures.maxByOrNull { it.uploadDate.sortKey() }
+    val latestCapture = group.captures.maxByOrNull { it.uploadDate.sortEpochMillis() }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -970,7 +976,7 @@ private fun CaptureGroupCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text(group.titleName, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "${group.captures.size} captures • ${latestCapture?.uploadDate ?: "Timestamp unavailable"}",
+                    "${group.captures.size} captures • ${latestCapture?.uploadDate.toHumanDateTime() ?: "Timestamp unavailable"}",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(Modifier.height(4.dp))
@@ -1014,7 +1020,7 @@ private fun TrophyCard(trophy: TrophyEntry) {
         buildString {
             trophy.earnedAt?.takeIf { it.isNotBlank() }?.let {
                 append("Earned ")
-                append(it)
+                append(it.toHumanDateTime() ?: it)
             }
             trophy.progressRate?.let {
                 if (isNotEmpty()) {
@@ -1099,7 +1105,7 @@ private fun CaptureCard(
                     append(capture.captureTypeLabel)
                     capture.uploadDate?.takeIf { it.isNotBlank() }?.let {
                         append(" • ")
-                        append(it)
+                        append(it.toHumanDateTime() ?: it)
                     }
                     capture.resolution?.takeIf { it.isNotBlank() }?.let {
                         append(" • ")
@@ -1313,21 +1319,21 @@ private fun List<TrophyEntry>.sectionsFor(option: TrophySortOption): List<Trophy
         TrophySortOption.EarnedNewest -> buildList {
             val recent7 = this@sectionsFor
                 .filter { it.earnedAt.daysSinceEarned()?.let { days -> days in 0..6 } == true }
-                .sortedByDescending { it.earnedAt.sortKey() }
+                .sortedByDescending { it.earnedAt.sortEpochMillis() }
             if (recent7.isNotEmpty()) {
                 add(TrophySection("Earned in last 7 days", recent7))
             }
 
             val recent30 = this@sectionsFor
                 .filter { it.earnedAt.daysSinceEarned()?.let { days -> days in 7..29 } == true }
-                .sortedByDescending { it.earnedAt.sortKey() }
+                .sortedByDescending { it.earnedAt.sortEpochMillis() }
             if (recent30.isNotEmpty()) {
                 add(TrophySection("Earned in last 30 days", recent30))
             }
 
             val older = this@sectionsFor
                 .filter { it.earnedAt.daysSinceEarned()?.let { days -> days >= 30 } == true }
-                .sortedByDescending { it.earnedAt.sortKey() }
+                .sortedByDescending { it.earnedAt.sortEpochMillis() }
             if (older.isNotEmpty()) {
                 add(TrophySection("Earned more than 30 days ago", older))
             }
@@ -1353,7 +1359,7 @@ private fun List<TrophyEntry>.sectionsFor(option: TrophySortOption): List<Trophy
             val earned = this@sectionsFor
                 .filter { it.earned == true }
                 .sortedWith(
-                    compareByDescending<TrophyEntry> { it.earnedAt.sortKey() }
+                    compareByDescending<TrophyEntry> { it.earnedAt.sortEpochMillis() }
                         .thenBy { it.name.orEmpty() },
                 )
             if (earned.isNotEmpty()) {
@@ -1373,7 +1379,9 @@ private fun List<TrophyEntry>.sectionsFor(option: TrophySortOption): List<Trophy
     }
 }
 
-private fun String?.sortKey(): String = this ?: ""
+private fun String?.sortEpochMillis(): Long {
+    return this.toInstantOrNull()?.toEpochMilli() ?: Long.MIN_VALUE
+}
 
 private fun String?.raritySortKey(): Float {
     return this?.toFloatOrNull() ?: Float.MAX_VALUE
@@ -1393,6 +1401,46 @@ private fun String?.toInstantOrNull(): Instant? {
         ?: runCatching { OffsetDateTime.parse(this).toInstant() }.getOrNull()
         ?: runCatching { ZonedDateTime.parse(this).toInstant() }.getOrNull()
 }
+
+private fun String?.toHumanDateTime(now: Instant = Instant.now()): String? {
+    val instant = this.toInstantOrNull() ?: return this?.takeIf { it.isNotBlank() }
+    return instant.toHumanDateTime(now)
+}
+
+private fun Instant.toHumanDateTime(now: Instant = Instant.now()): String {
+    val zoneId = deviceZoneId()
+    val localDate = atZone(zoneId).toLocalDate()
+    val nowLocalDate = now.atZone(zoneId).toLocalDate()
+    val absolute = formatAbsoluteDateTime(zoneId, nowLocalDate)
+
+    if (ChronoUnit.DAYS.between(localDate, nowLocalDate) !in 0..6) {
+        return absolute
+    }
+
+    val relative = DateUtils.getRelativeTimeSpanString(
+        toEpochMilli(),
+        now.toEpochMilli(),
+        DateUtils.MINUTE_IN_MILLIS,
+        DateUtils.FORMAT_ABBREV_RELATIVE,
+    ).toString()
+    return "$relative ($absolute)"
+}
+
+private fun Instant.formatAbsoluteDateTime(
+    zoneId: ZoneId,
+    nowLocalDate: LocalDate,
+): String {
+    val zoned = atZone(zoneId)
+    val skeleton = when {
+        zoned.toLocalDate() == nowLocalDate -> "jm"
+        zoned.year == nowLocalDate.year -> "MMM d, jm"
+        else -> "MMM d, y, jm"
+    }
+    val pattern = DateFormat.getBestDateTimePattern(Locale.getDefault(), skeleton)
+    return zoned.format(DateTimeFormatter.ofPattern(pattern, Locale.getDefault()))
+}
+
+private fun deviceZoneId(): ZoneId = TimeZone.getDefault().toZoneId()
 
 private fun formatFileSize(bytes: Long): String {
     return when {
