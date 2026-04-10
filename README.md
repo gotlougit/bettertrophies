@@ -1,48 +1,44 @@
 # BetterTrophies
 
-Android app scaffold for browsing PlayStation profile, recent titles, trophy titles, and trophies from an NPSSO token.
+BetterTrophies is an Android app for viewing PlayStation profile data, trophy progress, and cloud captures.
+It is meant to be a partial replacement for the official PlayStation app, focusing more on
+keeping access to trophies and game captures rather than purchases etc.
 
-This project vendors the upstream `stationplayer` crate and consumes its UniFFI interface directly from the Android app.
+## Features
 
-Sources used:
+- Load profile and trophy summary data.
+- Browse trophy titles and drill into per-title trophies.
+- Browse PlayStation cloud captures grouped by game.
+- Cache dashboard/trophy/capture metadata locally for faster offline-first reloads.
+- Cache capture assets locally, with save-to-gallery and share support.
 
-- `stationplayer` vendored from `git.sr.ht/~gotlou/stationplayer` at commit `2c8ce1341a137ec70f52aab80f2243f323e36ad4`
-- `https://sal.dev/android/intro-rust-android-uniffi/`
+## Roadmap
 
-## Layout
+- Adding advanced trophy + game stats (eg. playtime, platform etc.)
+- Export data
+- Console storage management
+- Chat support
 
-- `Cargo.toml`: cargo workspace root for the binding generator helper
-- `vendor/stationplayer/`: vendored PlayStation API crate plus its UniFFI surface
-- `rust/bindings/`: tiny helper crate that runs `uniffi-bindgen`
-- `app/`: Jetpack Compose Android client
-- `scripts/`: binding generation and Android native library build scripts
+## Build
 
-## Build flow
-
-1. Enter the Nix dev shell:
+1. Enter the Nix development shell:
 
 ```bash
 nix develop
 ```
 
-2. Generate Kotlin bindings from the Rust bridge:
+2. Build the debug APK (preBuild runs binding/native steps):
 
 ```bash
-./scripts/generate-bindings.sh
+./gradlew :app:assembleDebug
 ```
 
-3. Build Android native libraries and copy them into `app/src/main/jniLibs`:
+3. Install on device:
 
 ```bash
-./scripts/build-android-libs.sh
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-4. Build the Android app:
+## Upstream Dependency Metadata
 
-```bash
-gradle :app:assembleDebug
-```
-
-The scripts expect `ANDROID_HOME` or `ANDROID_SDK_ROOT` to be set, which the included `flake.nix` already does inside `nix develop`.
-
-The Nix shell uses `rust-overlay` so `cargo-ndk` has the Android Rust stdlibs required for `aarch64-linux-android` and `x86_64-linux-android`.
+- Vendored `stationplayer` source: `git.sr.ht/~gotlou/stationplayer`
