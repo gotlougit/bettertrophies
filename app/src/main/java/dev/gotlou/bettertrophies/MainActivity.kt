@@ -14,6 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -63,6 +65,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -257,8 +262,8 @@ private fun DashboardScreen(
 
                 item {
                     CapturesEntryCard(
-                        totalCaptures = state.captureGroups.sumOf { it.captures.size },
-                        totalGames = state.captureGroups.size,
+                        totalCaptures = state.captureTotals.totalCaptures,
+                        totalGames = state.captureTotals.totalGames,
                         onShowCaptures = onShowCaptures,
                     )
                 }
@@ -851,10 +856,15 @@ private fun SummaryCard(
                 StatPill("Level", level)
                 StatPill("Points", points)
                 StatPill("Progress", "$progress%")
-                StatPill("Bronze", bronze)
-                StatPill("Silver", silver)
-                StatPill("Gold", gold)
-                StatPill("Platinum", platinum)
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                TrophyDistributionPill("Bronze", bronze, Color(0xFFAA6C39), Modifier.weight(1f))
+                TrophyDistributionPill("Silver", silver, Color(0xFF98A3B3), Modifier.weight(1f))
+                TrophyDistributionPill("Gold", gold, Color(0xFFD8A320), Modifier.weight(1f))
+                TrophyDistributionPill("Platinum", platinum, Color(0xFF7BA7FF), Modifier.weight(1f))
             }
         }
     }
@@ -874,6 +884,74 @@ private fun StatPill(label: String, value: String) {
 }
 
 @Composable
+private fun TrophyDistributionPill(
+    label: String,
+    value: String,
+    accentColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(accentColor.copy(alpha = 0.14f))
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        TrophyGlyph(accentColor)
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = accentColor,
+        )
+        Text(text = label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+    }
+}
+
+@Composable
+private fun TrophyGlyph(accentColor: Color) {
+    Canvas(modifier = Modifier.size(24.dp)) {
+        val cupWidth = size.width * 0.54f
+        val cupHeight = size.height * 0.38f
+        val cupLeft = (size.width - cupWidth) / 2f
+        val cupTop = size.height * 0.16f
+        val stroke = size.width * 0.1f
+
+        drawRoundRect(
+            color = accentColor,
+            topLeft = Offset(cupLeft, cupTop),
+            size = Size(cupWidth, cupHeight),
+            cornerRadius = CornerRadius(size.width * 0.12f, size.width * 0.12f),
+        )
+        drawRoundRect(
+            color = accentColor,
+            topLeft = Offset(size.width * 0.45f, size.height * 0.52f),
+            size = Size(size.width * 0.1f, size.height * 0.18f),
+            cornerRadius = CornerRadius(stroke, stroke),
+        )
+        drawRoundRect(
+            color = accentColor,
+            topLeft = Offset(size.width * 0.3f, size.height * 0.72f),
+            size = Size(size.width * 0.4f, size.height * 0.12f),
+            cornerRadius = CornerRadius(stroke, stroke),
+        )
+        drawRoundRect(
+            color = accentColor,
+            topLeft = Offset(size.width * 0.1f, size.height * 0.26f),
+            size = Size(size.width * 0.14f, stroke),
+            cornerRadius = CornerRadius(stroke, stroke),
+        )
+        drawRoundRect(
+            color = accentColor,
+            topLeft = Offset(size.width * 0.76f, size.height * 0.26f),
+            size = Size(size.width * 0.14f, stroke),
+            cornerRadius = CornerRadius(stroke, stroke),
+        )
+    }
+}
+
+@Composable
 private fun RecentTitlesRow(
     titles: List<RecentTitle>,
     onSelect: (RecentTitle) -> Unit,
@@ -886,9 +964,10 @@ private fun RecentTitlesRow(
             Card(
                 modifier = Modifier
                     .width(220.dp)
+                    .requiredHeight(224.dp)
                     .clickable { onSelect(title) },
             ) {
-                Column {
+                Column(modifier = Modifier.fillMaxSize()) {
                     AsyncImage(
                         model = title.coverUrl,
                         contentDescription = title.titleName,
@@ -897,11 +976,24 @@ private fun RecentTitlesRow(
                             .fillMaxWidth()
                             .height(124.dp),
                     )
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Text(title.titleName, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .padding(14.dp),
+                    ) {
+                        Text(
+                            title.titleName,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.weight(1f))
                         Text(
                             "${title.platform} • ${title.playTimeHours}h",
                             style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }

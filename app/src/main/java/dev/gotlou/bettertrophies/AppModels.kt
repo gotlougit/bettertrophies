@@ -7,6 +7,11 @@ data class TrophyTotals(
     val platinum: Int,
 )
 
+data class CaptureTotals(
+    val totalCaptures: Int,
+    val totalGames: Int,
+)
+
 data class UserProfile(
     val onlineId: String,
     val firstName: String?,
@@ -109,6 +114,11 @@ data class CaptureGroup(
     val latestUploadDate: String?
         get() = captures.maxOfOrNull { it.uploadDate.orEmpty() }.takeIf { !it.isNullOrBlank() }
 }
+
+fun List<CaptureGroup>.toCaptureTotals(): CaptureTotals = CaptureTotals(
+    totalCaptures = sumOf { it.captures.size },
+    totalGames = size,
+)
 
 data class DashboardSnapshot(
     val profile: UserProfile,

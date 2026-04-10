@@ -53,6 +53,7 @@ data class MainUiState(
     val isShowingCachedCaptures: Boolean = false,
     val isRefreshingCaptures: Boolean = false,
     val capturesCacheUpdatedAtEpochMs: Long? = null,
+    val captureTotals: CaptureTotals = CaptureTotals(totalCaptures = 0, totalGames = 0),
     val error: String? = null,
     val logLines: List<String> = emptyList(),
 )
@@ -139,6 +140,7 @@ class MainViewModel(
                             isShowingCachedCaptures = false,
                             isRefreshingCaptures = false,
                             capturesCacheUpdatedAtEpochMs = null,
+                            captureTotals = CaptureTotals(totalCaptures = 0, totalGames = 0),
                             error = null,
                         )
                     }
@@ -248,6 +250,7 @@ class MainViewModel(
             val accountKey = accountKeyForToken(token)
             currentAccountKey = accountKey
             val hasCachedDashboard = loadCachedDashboard(accountKey)
+            val cachedCaptureTotals = loadCachedCaptureTotals(accountKey)
             if (!hasCachedDashboard) {
                 _state.update {
                     it.copy(
@@ -268,6 +271,7 @@ class MainViewModel(
                         isShowingCachedCaptures = false,
                         isRefreshingCaptures = false,
                         capturesCacheUpdatedAtEpochMs = null,
+                        captureTotals = cachedCaptureTotals,
                         error = null,
                     )
                 }
@@ -323,6 +327,7 @@ class MainViewModel(
                         isShowingCachedCaptures = false,
                         isRefreshingCaptures = false,
                         capturesCacheUpdatedAtEpochMs = null,
+                        captureTotals = cachedCaptureTotals,
                         error = null,
                     )
                 }
@@ -452,6 +457,7 @@ class MainViewModel(
                         isShowingCachedCaptures = false,
                         isRefreshingCaptures = false,
                         capturesCacheUpdatedAtEpochMs = updatedAtEpochMs,
+                        captureTotals = mergedGroups.toCaptureTotals(),
                         error = null,
                     )
                 }
@@ -492,19 +498,21 @@ class MainViewModel(
                         val updatedAtEpochMs = System.currentTimeMillis()
                         cacheStore.upsertCapture(accountKey, updated, updatedAtEpochMs)
                         _state.update { state ->
+                            val updatedGroups = state.captureGroups.map { group ->
+                                if (group.titleId != updated.titleId) group else group.copy(
+                                    captures = group.captures.map { existing ->
+                                        if (existing.ugcId == updated.ugcId) {
+                                            updated.copy(isCachedOnly = existing.isCachedOnly)
+                                        } else {
+                                            existing
+                                        }
+                                    },
+                                )
+                            }
                             state.copy(
-                                captureGroups = state.captureGroups.map { group ->
-                                    if (group.titleId != updated.titleId) group else group.copy(
-                                        captures = group.captures.map { existing ->
-                                            if (existing.ugcId == updated.ugcId) {
-                                                updated.copy(isCachedOnly = existing.isCachedOnly)
-                                            } else {
-                                                existing
-                                            }
-                                        },
-                                    )
-                                },
+                                captureGroups = updatedGroups,
                                 capturesCacheUpdatedAtEpochMs = updatedAtEpochMs,
+                                captureTotals = updatedGroups.toCaptureTotals(),
                             )
                         }
                     }
@@ -692,6 +700,7 @@ class MainViewModel(
                 isShowingCachedCaptures = false,
                 isRefreshingCaptures = false,
                 capturesCacheUpdatedAtEpochMs = null,
+                captureTotals = loadCachedCaptureTotals(accountKey),
                 error = null,
             )
         }
@@ -728,9 +737,14 @@ class MainViewModel(
                 isShowingCachedCaptures = cachedCaptures != null,
                 isRefreshingCaptures = cachedCaptures != null,
                 capturesCacheUpdatedAtEpochMs = cachedCaptures?.updatedAtEpochMs,
+                captureTotals = cachedCaptures?.groups.orEmpty().toCaptureTotals(),
                 error = null,
             )
         }
+    }
+
+    private fun loadCachedCaptureTotals(accountKey: String): CaptureTotals {
+        return cacheStore.readCaptureGroups(accountKey)?.groups.orEmpty().toCaptureTotals()
     }
 
     private fun mergeCaptureGroups(
