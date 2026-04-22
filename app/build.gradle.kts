@@ -57,6 +57,7 @@ fun Project.readRustlsPlatformVerifierAndroidMetadata(): RustlsPlatformVerifierA
 }
 
 val rustlsPlatformVerifierAndroidMetadata = project.readRustlsPlatformVerifierAndroidMetadata()
+val generatedBindingsDir = layout.buildDirectory.dir("generated/uniffi/java")
 
 android {
     namespace = "dev.gotlou.bettertrophies"
@@ -108,8 +109,15 @@ android {
         }
     }
 
+    lint {
+        // UniFFI output is regenerated during preBuild; linting it produces
+        // non-actionable SDK warnings in generated code rather than app code.
+        checkGeneratedSources = false
+        lintConfig = file("lint.xml")
+    }
+
     sourceSets.named("main") {
-        java.srcDir("src/generated/java")
+        java.srcDir(generatedBindingsDir)
         jniLibs.srcDir("src/main/jniLibs")
     }
 }
@@ -118,7 +126,8 @@ val generateRustBindings by tasks.registering(Exec::class) {
     group = "rust"
     description = "Generates UniFFI Kotlin bindings from stationplayer."
     workingDir = rootDir
-    commandLine("bash", "./scripts/generate-bindings.sh")
+    outputs.dir(generatedBindingsDir)
+    commandLine("bash", "./scripts/generate-bindings.sh", generatedBindingsDir.get().asFile.absolutePath)
 }
 
 val buildRustAndroidLibs by tasks.registering(Exec::class) {
@@ -157,4 +166,5 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    testImplementation("junit:junit:4.13.2")
 }

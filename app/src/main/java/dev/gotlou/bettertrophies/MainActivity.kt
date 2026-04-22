@@ -22,6 +22,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -32,6 +36,7 @@ import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
@@ -49,6 +54,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material.pullrefresh.PullRefreshIndicator
 import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.material.pullrefresh.rememberPullRefreshState
@@ -72,8 +78,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
@@ -118,8 +126,17 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             BetterTrophiesTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    BetterTrophiesScreen(viewModel = viewModel)
+                Scaffold(
+                    modifier = Modifier.fillMaxSize(),
+                    containerColor = Color.Transparent,
+                    contentWindowInsets = WindowInsets.safeDrawing,
+                ) { innerPadding ->
+                    Surface(modifier = Modifier.fillMaxSize()) {
+                        BetterTrophiesScreen(
+                            viewModel = viewModel,
+                            contentPadding = innerPadding,
+                        )
+                    }
                 }
             }
         }
@@ -127,7 +144,10 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun BetterTrophiesScreen(viewModel: MainViewModel) {
+private fun BetterTrophiesScreen(
+    viewModel: MainViewModel,
+    contentPadding: PaddingValues,
+) {
     val state by viewModel.state.collectAsState()
 
     Box(
@@ -155,31 +175,53 @@ private fun BetterTrophiesScreen(viewModel: MainViewModel) {
                 onShowGames = viewModel::showGamesScreen,
                 onShowCaptures = viewModel::showCapturesScreen,
                 onOpenRecentTitle = { viewModel.loadTrophiesForTitle(it.npTitleId, it.titleName) },
+                contentPadding = contentPadding,
             )
 
             MainScreen.Games -> GamesScreen(
                 state = state,
                 onBack = viewModel::showDashboardScreen,
                 onSelectTitle = viewModel::loadTrophiesForGame,
+                contentPadding = contentPadding,
             )
 
             MainScreen.TrophyDetail -> TrophyDetailsScreen(
                 state = state,
                 onBack = viewModel::showGamesScreen,
                 onSortChanged = viewModel::setTrophySort,
+                contentPadding = contentPadding,
             )
 
             MainScreen.Captures -> CapturesScreen(
                 state = state,
                 onBack = viewModel::showDashboardScreen,
                 onSelectGroup = viewModel::openCaptureGroup,
+                contentPadding = contentPadding,
             )
 
             MainScreen.CaptureDetail -> CaptureDetailsScreen(
                 state = state,
                 onBack = viewModel::showCapturesScreen,
+                contentPadding = contentPadding,
             )
         }
+    }
+}
+
+@Composable
+private fun rememberScreenContentPadding(
+    contentPadding: PaddingValues,
+    horizontal: Dp = 20.dp,
+    vertical: Dp = 20.dp,
+): PaddingValues {
+    val layoutDirection = LocalLayoutDirection.current
+    return remember(contentPadding, horizontal, vertical, layoutDirection) {
+        PaddingValues(
+            start = contentPadding.calculateStartPadding(layoutDirection) + horizontal,
+            top = contentPadding.calculateTopPadding() + vertical,
+            end = contentPadding.calculateEndPadding(layoutDirection) + horizontal,
+            bottom = contentPadding.calculateBottomPadding() + vertical,
+        )
     }
 }
 
@@ -197,12 +239,14 @@ private fun DashboardScreen(
     onShowGames: () -> Unit,
     onShowCaptures: () -> Unit,
     onOpenRecentTitle: (RecentTitle) -> Unit,
+    contentPadding: PaddingValues,
 ) {
     val showAuthModule = state.isRestoringStoredNpsso || !state.hasStoredNpsso || state.isEditingStoredNpsso
     val pullRefreshState = rememberPullRefreshState(
         refreshing = state.isRefreshingDashboard,
         onRefresh = onRefresh,
     )
+    val listContentPadding = rememberScreenContentPadding(contentPadding)
 
     Box(
         modifier = Modifier
@@ -210,8 +254,10 @@ private fun DashboardScreen(
             .pullRefresh(pullRefreshState),
     ) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(20.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .consumeWindowInsets(contentPadding),
+            contentPadding = listContentPadding,
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             if (showAuthModule) {
@@ -296,7 +342,7 @@ private fun DashboardScreen(
             state = pullRefreshState,
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 20.dp),
+                .padding(top = contentPadding.calculateTopPadding() + 20.dp),
             backgroundColor = MaterialTheme.colorScheme.surfaceContainerHigh,
             contentColor = MaterialTheme.colorScheme.primary,
         )
@@ -308,14 +354,18 @@ private fun CapturesScreen(
     state: MainUiState,
     onBack: () -> Unit,
     onSelectGroup: (CaptureGroup) -> Unit,
+    contentPadding: PaddingValues,
 ) {
     val captureGroups = state.captureGroups.sortedByDescending { group ->
         group.captures.maxOfOrNull { it.uploadDate.sortEpochMillis() }
     }
+    val listContentPadding = rememberScreenContentPadding(contentPadding)
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(20.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .consumeWindowInsets(contentPadding),
+        contentPadding = listContentPadding,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
@@ -376,6 +426,7 @@ private fun CapturesScreen(
 private fun CaptureDetailsScreen(
     state: MainUiState,
     onBack: () -> Unit,
+    contentPadding: PaddingValues,
 ) {
     val selectedGroup = state.captureGroups.firstOrNull { it.titleId == state.selectedCaptureGroupId }
     val captures = selectedGroup
@@ -384,10 +435,13 @@ private fun CaptureDetailsScreen(
         .orEmpty()
     var selectedCaptureId by remember(state.selectedCaptureGroupId) { mutableStateOf<String?>(null) }
     val selectedCapture = captures.firstOrNull { it.ugcId == selectedCaptureId }
+    val listContentPadding = rememberScreenContentPadding(contentPadding)
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(20.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .consumeWindowInsets(contentPadding),
+        contentPadding = listContentPadding,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
@@ -455,12 +509,16 @@ private fun GamesScreen(
     state: MainUiState,
     onBack: () -> Unit,
     onSelectTitle: (GameTitle) -> Unit,
+    contentPadding: PaddingValues,
 ) {
     val dashboard = state.dashboard ?: return
+    val listContentPadding = rememberScreenContentPadding(contentPadding)
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(20.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .consumeWindowInsets(contentPadding),
+        contentPadding = listContentPadding,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
@@ -497,14 +555,18 @@ private fun TrophyDetailsScreen(
     state: MainUiState,
     onBack: () -> Unit,
     onSortChanged: (TrophySortOption) -> Unit,
+    contentPadding: PaddingValues,
 ) {
     val trophySections = remember(state.trophies, state.trophySort) {
         state.trophies.sectionsFor(state.trophySort)
     }
+    val listContentPadding = rememberScreenContentPadding(contentPadding)
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(20.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .consumeWindowInsets(contentPadding),
+        contentPadding = listContentPadding,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
