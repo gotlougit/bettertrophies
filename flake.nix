@@ -48,10 +48,10 @@
             sdkPkgs:
             with sdkPkgs;
             [
-              build-tools-34-0-0
+              build-tools-37-0-0
               cmdline-tools-latest
               platform-tools
-              platforms-android-34
+              platforms-android-36
               emulator
             ]
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
@@ -95,7 +95,7 @@
             ANDROID_HOME = "${android-sdk}/share/android-sdk";
             ANDROID_SDK_ROOT = "${android-sdk}/share/android-sdk";
             JAVA_HOME = pkgs.jdk17.home;
-            GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${android-sdk}/share/android-sdk/build-tools/34.0.0/aapt2";
+            GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${android-sdk}/share/android-sdk/build-tools/37.0.0/aapt2";
 
             shellHook = ''
               export CARGO_HOME="$(realpath ./.localcargo)"

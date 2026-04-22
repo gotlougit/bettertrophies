@@ -137,8 +137,8 @@ private fun NPSSOEntryCard(
                 modifier = Modifier.fillMaxWidth(),
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(
-                    autoCorrect = false,
                     keyboardType = KeyboardType.Password,
+                    autoCorrectEnabled = false,
                 ),
                 singleLine = true,
             )

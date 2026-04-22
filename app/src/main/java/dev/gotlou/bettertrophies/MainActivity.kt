@@ -9,7 +9,6 @@ import android.text.format.DateFormat
 import android.text.format.DateUtils
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -26,6 +25,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -62,11 +62,11 @@ import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -84,6 +84,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation3.runtime.entryProvider
+import androidx.navigation3.runtime.rememberNavBackStack
+import androidx.navigation3.ui.NavDisplay
 import coil.compose.AsyncImage
 import dev.gotlou.bettertrophies.ui.theme.BetterTrophiesTheme
 import java.io.File
@@ -105,39 +109,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        onBackPressedDispatcher.addCallback(
-            this,
-            object : OnBackPressedCallback(true) {
-                override fun handleOnBackPressed() {
-                    when (viewModel.state.value.currentScreen) {
-                        MainScreen.Games -> viewModel.showDashboardScreen()
-                        MainScreen.Captures -> viewModel.showDashboardScreen()
-                        MainScreen.TrophyDetail -> viewModel.showGamesScreen()
-                        MainScreen.CaptureDetail -> viewModel.showCapturesScreen()
-                        MainScreen.Dashboard -> {
-                            isEnabled = false
-                            onBackPressedDispatcher.onBackPressed()
-                            isEnabled = true
-                        }
-                    }
-                }
-            },
-        )
         enableEdgeToEdge()
         setContent {
             BetterTrophiesTheme {
-                Scaffold(
-                    modifier = Modifier.fillMaxSize(),
-                    containerColor = Color.Transparent,
-                    contentWindowInsets = WindowInsets.safeDrawing,
-                ) { innerPadding ->
-                    Surface(modifier = Modifier.fillMaxSize()) {
-                        BetterTrophiesScreen(
-                            viewModel = viewModel,
-                            contentPadding = innerPadding,
-                        )
-                    }
-                }
+                BetterTrophiesScreen(
+                    activity = this,
+                    viewModel = viewModel,
+                )
             }
         }
     }
@@ -145,65 +123,121 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun BetterTrophiesScreen(
+    activity: ComponentActivity,
     viewModel: MainViewModel,
-    contentPadding: PaddingValues,
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val backStack = rememberNavBackStack(AppRoute.Dashboard)
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        MaterialTheme.colorScheme.surfaceContainerHighest,
-                        MaterialTheme.colorScheme.surface,
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets.safeDrawing,
+    ) { innerPadding ->
+        Surface(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                MaterialTheme.colorScheme.surfaceContainerHighest,
+                                MaterialTheme.colorScheme.surface,
+                            ),
+                        ),
                     ),
-                ),
-            ),
-    ) {
-        when (state.currentScreen) {
-            MainScreen.Dashboard -> DashboardScreen(
-                state = state,
-                onNpssoChanged = viewModel::updateNpsso,
-                onConnect = viewModel::connect,
-                onRefresh = viewModel::refreshDashboard,
-                onPasteSignInUrl = viewModel::useSignInUrl,
-                onCancelStoredTokenEdit = viewModel::cancelStoredTokenEdit,
-                onClearStoredToken = viewModel::clearStoredToken,
-                onClearLogs = viewModel::clearLogs,
-                onShowGames = viewModel::showGamesScreen,
-                onShowCaptures = viewModel::showCapturesScreen,
-                onOpenRecentTitle = { viewModel.loadTrophiesForTitle(it.npTitleId, it.titleName) },
-                contentPadding = contentPadding,
-            )
+            ) {
+                NavDisplay(
+                    backStack = backStack,
+                    onBack = {
+                        if (backStack.size > 1) {
+                            backStack.removeLastOrNull()
+                        } else {
+                            activity.finish()
+                        }
+                    },
+                    entryProvider = entryProvider {
+                        entry<AppRoute.Dashboard> {
+                            LaunchedEffect(Unit) {
+                                viewModel.clearError()
+                            }
+                            DashboardScreen(
+                                state = state,
+                                onNpssoChanged = viewModel::updateNpsso,
+                                onConnect = viewModel::connect,
+                                onRefresh = viewModel::refreshDashboard,
+                                onPasteSignInUrl = viewModel::useSignInUrl,
+                                onCancelStoredTokenEdit = viewModel::cancelStoredTokenEdit,
+                                onClearStoredToken = viewModel::clearStoredToken,
+                                onClearLogs = viewModel::clearLogs,
+                                onShowGames = { backStack.add(AppRoute.Games) },
+                                onShowCaptures = { backStack.add(AppRoute.Captures) },
+                                onOpenRecentTitle = {
+                                    backStack.add(AppRoute.Games)
+                                    backStack.add(AppRoute.TrophyDetails(it.npTitleId, it.titleName))
+                                },
+                                contentPadding = innerPadding,
+                            )
+                        }
 
-            MainScreen.Games -> GamesScreen(
-                state = state,
-                onBack = viewModel::showDashboardScreen,
-                onSelectTitle = viewModel::loadTrophiesForGame,
-                contentPadding = contentPadding,
-            )
+                        entry<AppRoute.Games> {
+                            LaunchedEffect(Unit) {
+                                viewModel.enterGames()
+                            }
+                            GamesScreen(
+                                state = state,
+                                onBack = { backStack.removeLastOrNull() },
+                                onSelectTitle = { title ->
+                                    viewModel.loadTrophiesForGame(title)
+                                    backStack.add(AppRoute.TrophyDetails(title.id, title.titleName))
+                                },
+                                contentPadding = innerPadding,
+                            )
+                        }
 
-            MainScreen.TrophyDetail -> TrophyDetailsScreen(
-                state = state,
-                onBack = viewModel::showGamesScreen,
-                onSortChanged = viewModel::setTrophySort,
-                contentPadding = contentPadding,
-            )
+                        entry<AppRoute.TrophyDetails> { route ->
+                            LaunchedEffect(route.titleId) {
+                                viewModel.ensureTrophiesLoaded(route.titleId, route.titleName)
+                            }
+                            TrophyDetailsScreen(
+                                state = state,
+                                titleId = route.titleId,
+                                titleName = route.titleName,
+                                onBack = { backStack.removeLastOrNull() },
+                                onSortChanged = viewModel::setTrophySort,
+                                contentPadding = innerPadding,
+                            )
+                        }
 
-            MainScreen.Captures -> CapturesScreen(
-                state = state,
-                onBack = viewModel::showDashboardScreen,
-                onSelectGroup = viewModel::openCaptureGroup,
-                contentPadding = contentPadding,
-            )
+                        entry<AppRoute.Captures> {
+                            LaunchedEffect(Unit) {
+                                viewModel.enterCaptures()
+                            }
+                            CapturesScreen(
+                                state = state,
+                                onBack = { backStack.removeLastOrNull() },
+                                onSelectGroup = { group ->
+                                    backStack.add(AppRoute.CaptureDetails(group.titleId, group.titleName))
+                                },
+                                contentPadding = innerPadding,
+                            )
+                        }
 
-            MainScreen.CaptureDetail -> CaptureDetailsScreen(
-                state = state,
-                onBack = viewModel::showCapturesScreen,
-                contentPadding = contentPadding,
-            )
+                        entry<AppRoute.CaptureDetails> { route ->
+                            LaunchedEffect(route.groupId) {
+                                viewModel.enterCaptures()
+                                viewModel.selectCaptureGroup(route.groupId)
+                            }
+                            CaptureDetailsScreen(
+                                state = state,
+                                fallbackTitle = route.titleName,
+                                onBack = { backStack.removeLastOrNull() },
+                                contentPadding = innerPadding,
+                            )
+                        }
+                    },
+                )
+            }
         }
     }
 }
@@ -256,6 +290,7 @@ private fun DashboardScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
+                .imePadding()
                 .consumeWindowInsets(contentPadding),
             contentPadding = listContentPadding,
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -425,6 +460,7 @@ private fun CapturesScreen(
 @Composable
 private fun CaptureDetailsScreen(
     state: MainUiState,
+    fallbackTitle: String,
     onBack: () -> Unit,
     contentPadding: PaddingValues,
 ) {
@@ -446,7 +482,7 @@ private fun CaptureDetailsScreen(
     ) {
         item {
             ScreenHeader(
-                title = selectedGroup?.titleName ?: "Capture details",
+                title = selectedGroup?.titleName ?: fallbackTitle,
                 subtitle = "${captures.size} captures",
                 actionLabel = "Captures",
                 onAction = onBack,
@@ -553,6 +589,8 @@ private fun GamesScreen(
 @Composable
 private fun TrophyDetailsScreen(
     state: MainUiState,
+    titleId: String,
+    titleName: String,
     onBack: () -> Unit,
     onSortChanged: (TrophySortOption) -> Unit,
     contentPadding: PaddingValues,
@@ -571,8 +609,8 @@ private fun TrophyDetailsScreen(
     ) {
         item {
             ScreenHeader(
-                title = state.selectedTitleName ?: "Trophies",
-                subtitle = state.selectedTitleId ?: "Selected game",
+                title = state.selectedTitleName ?: titleName,
+                subtitle = state.selectedTitleId ?: titleId,
                 actionLabel = "All games",
                 onAction = onBack,
             )

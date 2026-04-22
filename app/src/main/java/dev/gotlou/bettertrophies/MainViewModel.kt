@@ -40,7 +40,6 @@ data class MainUiState(
     val dashboard: DashboardSnapshot? = null,
     val trophies: List<TrophyEntry> = emptyList(),
     val captureGroups: List<CaptureGroup> = emptyList(),
-    val currentScreen: MainScreen = MainScreen.Dashboard,
     val selectedTitleId: String? = null,
     val selectedTitleName: String? = null,
     val selectedCaptureGroupId: String? = null,
@@ -61,14 +60,6 @@ data class MainUiState(
     val error: String? = null,
     val logLines: List<String> = emptyList(),
 )
-
-enum class MainScreen {
-    Dashboard,
-    Games,
-    TrophyDetail,
-    Captures,
-    CaptureDetail,
-}
 
 class MainViewModel(
     application: Application,
@@ -128,7 +119,6 @@ class MainViewModel(
                             dashboard = null,
                             trophies = emptyList(),
                             captureGroups = emptyList(),
-                            currentScreen = MainScreen.Dashboard,
                             selectedTitleId = null,
                             selectedTitleName = null,
                             selectedCaptureGroupId = null,
@@ -162,8 +152,8 @@ class MainViewModel(
         _state.update { it.copy(logLines = emptyList()) }
     }
 
-    fun showDashboardScreen() {
-        _state.update { it.copy(currentScreen = MainScreen.Dashboard, error = null) }
+    fun clearError() {
+        _state.update { it.copy(error = null) }
     }
 
     fun refreshDashboard() {
@@ -185,9 +175,9 @@ class MainViewModel(
         connect()
     }
 
-    fun showGamesScreen() {
+    fun enterGames() {
         _state.update { current ->
-            if (current.dashboard == null) current else current.copy(currentScreen = MainScreen.Games, error = null)
+            if (current.dashboard == null) current else current.copy(error = null)
         }
     }
 
@@ -195,10 +185,9 @@ class MainViewModel(
         _state.update { it.copy(trophySort = sort) }
     }
 
-    fun showCapturesScreen() {
+    fun enterCaptures() {
         _state.update {
             it.copy(
-                currentScreen = MainScreen.Captures,
                 selectedCaptureGroupId = null,
                 error = null,
             )
@@ -208,14 +197,24 @@ class MainViewModel(
         }
     }
 
-    fun openCaptureGroup(group: CaptureGroup) {
+    fun selectCaptureGroup(groupId: String) {
         _state.update {
             it.copy(
-                currentScreen = MainScreen.CaptureDetail,
-                selectedCaptureGroupId = group.titleId,
+                selectedCaptureGroupId = groupId,
                 error = null,
             )
         }
+    }
+
+    fun ensureTrophiesLoaded(titleId: String, titleName: String) {
+        val current = state.value
+        if (
+            current.selectedTitleId == titleId &&
+            (current.isLoadingTrophies || current.isRefreshingTrophies || current.trophies.isNotEmpty())
+        ) {
+            return
+        }
+        loadTrophiesForTitle(titleId, titleName)
     }
 
     fun useSignInUrl() {
@@ -261,7 +260,6 @@ class MainViewModel(
                 _state.update {
                     it.copy(
                         isLoading = true,
-                        currentScreen = MainScreen.Dashboard,
                         dashboard = null,
                         trophies = emptyList(),
                         captureGroups = emptyList(),
@@ -320,7 +318,6 @@ class MainViewModel(
                         isShowingCachedDashboard = false,
                         isRefreshingDashboard = false,
                         dashboardCacheUpdatedAtEpochMs = updatedAtEpochMs,
-                        currentScreen = MainScreen.Dashboard,
                         dashboard = dashboard,
                         selectedTitleId = null,
                         selectedTitleName = null,
@@ -560,13 +557,13 @@ class MainViewModel(
 
         if (capture.localPrimaryAssetPath.isNullOrBlank()) {
             val downloaded = activeSession.downloadCloudMediaCapture(capture.ugcId)
-            val bytes = downloaded.bytes
+            val bytes = ByteArray(downloaded.bytes.size) { index -> downloaded.bytes[index].toByte() }
             val localPath = captureMediaStore.persistPrimaryAsset(
                 accountKey = accountKey,
                 captureId = capture.ugcId,
                 fileName = downloaded.fileName,
                 contentType = downloaded.contentType,
-                bytes = bytes.toUByteArray().toByteArray(),
+                bytes = bytes,
             )
             updated = updated.copy(
                 primaryAssetUrl = downloaded.sourceUrl,
@@ -690,7 +687,6 @@ class MainViewModel(
         _state.update {
             it.copy(
                 dashboard = cachedDashboard.snapshot,
-                currentScreen = MainScreen.Dashboard,
                 selectedTitleId = null,
                 selectedTitleName = null,
                 selectedCaptureGroupId = null,
@@ -720,7 +716,6 @@ class MainViewModel(
     ) {
         _state.update {
             it.copy(
-                currentScreen = MainScreen.TrophyDetail,
                 selectedTitleId = titleId,
                 selectedTitleName = titleName,
                 trophies = cachedTrophies?.trophies.orEmpty(),
@@ -736,7 +731,6 @@ class MainViewModel(
     private fun showCaptureScreenWithCachedData(cachedCaptures: CachedCaptureGroups?) {
         _state.update {
             it.copy(
-                currentScreen = MainScreen.Captures,
                 selectedCaptureGroupId = null,
                 captureGroups = cachedCaptures?.groups.orEmpty(),
                 isLoadingCaptures = cachedCaptures == null,
