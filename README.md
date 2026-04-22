@@ -30,7 +30,7 @@ nix develop
 2. Build the debug APK (preBuild runs binding/native steps):
 
 ```bash
-./gradlew :app:assembleDebug
+gradle :app:assembleDebug
 ```
 
 3. Install on device:
@@ -42,3 +42,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ## Upstream Dependency Metadata
 
 - Vendored `stationplayer` source: `git.sr.ht/~gotlou/stationplayer`
+
+## Acknowledgements
+
+Some of the agent skills are taken directly from https://github.com/android/skills
