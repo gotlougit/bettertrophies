@@ -1,0 +1,16 @@
+BetterTrophies is an unofficial, open source Android client for checking
+PlayStation profile data, trophy progress, and cloud captures from one place.
+
+Features:
+- View your profile, trophy level, points, and overall completion progress.
+- Browse the full trophy library and drill into a game's earned and missing
+  trophies.
+- Browse PlayStation cloud captures grouped by game.
+- Keep cached dashboard, trophy, and capture data available for faster reloads.
+- Save cached captures to the gallery and share them with other apps.
+
+To load your data, BetterTrophies uses an NPSSO token from your PlayStation
+account. The app focuses on trophies and captures rather than storefront or
+purchase features.
+
+BetterTrophies is not affiliated with or endorsed by Sony.

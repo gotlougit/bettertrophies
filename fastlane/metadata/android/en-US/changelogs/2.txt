@@ -1,0 +1,2 @@
+Added trophy library improvements, cloud capture browsing, local caching,
+and save/share support for cached captures.

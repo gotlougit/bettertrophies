@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <rect width="108" height="108" fill="#0A4FB3"/>
+  <rect width="108" height="52" fill="#1565C0"/>
+  <path
+    d="M0 76C26 62 56 60 108 78V108H0Z"
+    fill="#0C3E93"/>
+  <path
+    d="M33 36H38V72H33ZM38 36H45A5 5 0 0 1 50 41V50A5 5 0 0 1 45 55H38ZM38 53H45A5 5 0 0 1 50 58V67A5 5 0 0 1 45 72H38ZM40 40H43.5A2.5 2.5 0 0 1 46 42.5V46.5A2.5 2.5 0 0 1 43.5 49H40ZM40 57H43.5A2.5 2.5 0 0 1 46 59.5V63.5A2.5 2.5 0 0 1 43.5 66H40Z"
+    fill="#FFF"
+    fill-rule="evenodd"/>
+  <path
+    d="M54 36H66A3 3 0 0 1 69 39V47A3 3 0 0 1 66 50H54A3 3 0 0 1 51 47V39A3 3 0 0 1 54 36ZM55 39H65V41H55Z"
+    fill="#FFF"
+    fill-rule="evenodd"/>
+  <path d="M47 40H51V44H47Z" fill="#FFF"/>
+  <path d="M69 40H73V44H69Z" fill="#FFF"/>
+  <path d="M58 50H62V60H58Z" fill="#FFF"/>
+  <path d="M54 60H66V65H54Z" fill="#FFF"/>
+  <path d="M52 65H68V72H52Z" fill="#FFF"/>
+</svg>
