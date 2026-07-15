@@ -1,0 +1,50 @@
+{
+  "credentials": {
+    "client_id": "09515159-7237-4370-9b40-3806e67c0891",
+    "redirect_uri": "com.scee.psxandroid.scecompcall://redirect",
+    "service_entity": "urn:service-entity:psn",
+    "scope": "psn:mobile.v2.core psn:clientapp",
+    "client_secret": "ucPjka5tntB2KqsP"
+  },
+  "package_name": "com.scee.psxandroid",
+  "app_constants": {
+    "version_name": "26.6.1",
+    "version_code": "26060100",
+    "package_name": "com.scee.psxandroid",
+    "min_sdk_version": "26",
+    "target_sdk_version": "35",
+    "websocket": {
+      "x_psn_app_type": "MOBILE_APP.PSAPP",
+      "sec_websocket_protocol": "np-pushpacket",
+      "sec_websocket_version": "13",
+      "x_psn_reconnection": "dynamic (Boolean.toString(f31093C))",
+      "x_psn_keep_alive_status_type": {
+        "INVALID": "",
+        "VOICE_CHAT": "3",
+        "IDLE": "6"
+      },
+      "websocket_close_codes": "see sources/db/m.java (m.a enum)",
+      "connection_timeout_ms": 30000
+    },
+    "websocket_keepalive_enum": {
+      "INVALID": 0,
+      "VOICE_CHAT": 1,
+      "IDLE": 2
+    },
+    "versa_user_agent": "com.sony.snei.np.android.sso.share.oauth.versa.USER_AGENT",
+    "versa_oauth_endpoints": {
+      "accountPage": "https://ca.{environment}account.sony.com/",
+      "authBase": "https://auth.api.{environment}sonyentertainmentnetwork.com/",
+      "ssoCookie": "https://auth.api.{environment}sonyentertainmentnetwork.com/2.0/ssocookie",
+      "signOut": "https://ca.{environment}account.sony.com/api/authn/v3/signOut",
+      "token": "https://ca.{environment}account.sony.com/api/authz/v3/oauth/token",
+      "authorize": "https://ca.{environment}account.sony.com/api/authz/v3/oauth/authorize",
+      "createAccount": "https://web.{environment}playstation.com/app/id/create_account/"
+    },
+    "app_user_agent": "com.scee.psxandroid.USER_AGENT",
+    "x_psn_app_ver": "dynamic (PackageInfo.versionName = \"26.6.1\")",
+    "x_psn_os_ver": "dynamic (Build.VERSION.RELEASE \u2014 Android OS version)",
+    "version_user_agent_header": "PlayStationApp-Android/26.6.1",
+    "notification_template_version": "26.6.1"
+  }
+}

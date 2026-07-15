@@ -281,3 +281,133 @@ fn file_extension_for_content_type(content_type: &str) -> Option<String> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::get_access_token;
+    use crate::headers::with_test_now;
+    use chrono::{DateTime, Utc};
+    use reqwest::Method;
+
+    fn test_access_token() -> AccessToken {
+        get_access_token(r#"{"access_token":"TEST_ACCESS_TOKEN"}"#)
+            .expect("test access token should parse")
+    }
+
+    fn fixed_now() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-05-02T12:00:00Z")
+            .expect("valid test timestamp")
+            .with_timezone(&Utc)
+    }
+
+    fn header(request: &reqwest::Request, name: &str) -> String {
+        request
+            .headers()
+            .get(name)
+            .unwrap_or_else(|| panic!("missing header {name}"))
+            .to_str()
+            .expect("header should be utf-8")
+            .to_string()
+    }
+
+    fn query_value(request: &reqwest::Request, name: &str) -> String {
+        request
+            .url()
+            .query_pairs()
+            .find_map(|(key, value)| (key == name).then(|| value.into_owned()))
+            .unwrap_or_else(|| panic!("missing query parameter {name}"))
+    }
+
+    fn assert_mobile_headers(request: &reqwest::Request) {
+        assert_eq!(header(request, "authorization"), "Bearer TEST_ACCESS_TOKEN");
+        assert_eq!(header(request, "accept-language"), "en-US");
+        assert_eq!(header(request, "accept-encoding"), "gzip");
+        assert_eq!(
+            header(request, "user-agent"),
+            consts::DEFAULT_OKHTTP_USER_AGENT
+        );
+        assert_eq!(
+            header(request, "if-modified-since"),
+            "Sat, 2 May 2026 11:47:00 +0000"
+        );
+        assert_eq!(header(request, "x-psn-sampled"), "0");
+        assert_eq!(
+            header(request, "x-psn-app-ver"),
+            consts::DEFAULT_APP_VERSION
+        );
+    }
+
+    #[test]
+    fn gallery_request_includes_limit_and_optional_cursor_without_network() {
+        with_test_now(fixed_now(), || {
+            let request = get_cloud_media_gallery(
+                &Client::new(),
+                test_access_token(),
+                100,
+                Some("TEST_CURSOR"),
+            )
+            .build()
+            .expect("request should build");
+
+            assert_eq!(request.method(), Method::GET);
+            assert_eq!(
+                request.url().path(),
+                "/api/gameMediaService/v2/c2s/category/cloudMediaGallery/ugcType/all"
+            );
+            assert_eq!(query_value(&request, "includeTokenizedUrls"), "true");
+            assert_eq!(query_value(&request, "limit"), "100");
+            assert_eq!(query_value(&request, "cursorMark"), "TEST_CURSOR");
+            assert_mobile_headers(&request);
+        });
+    }
+
+    #[test]
+    fn gallery_request_omits_cursor_when_absent() {
+        with_test_now(fixed_now(), || {
+            let request = get_cloud_media_gallery(&Client::new(), test_access_token(), 50, None)
+                .build()
+                .expect("request should build");
+
+            assert_eq!(query_value(&request, "limit"), "50");
+            assert!(
+                !request
+                    .url()
+                    .query_pairs()
+                    .any(|(key, _)| key == "cursorMark"),
+                "cursorMark should be omitted when not provided"
+            );
+        });
+    }
+
+    #[test]
+    fn capture_content_request_includes_fields_and_ugc_id() {
+        with_test_now(fixed_now(), || {
+            let request =
+                get_cloud_media_capture_content(&Client::new(), test_access_token(), "TEST_UGC_ID")
+                    .build()
+                    .expect("request should build");
+
+            assert_eq!(request.url().path(), "/api/gameMediaService/v2/c2s/content");
+            assert_eq!(query_value(&request, "fields"), CLOUD_MEDIA_FIELDS);
+            assert_eq!(query_value(&request, "ugcIds"), "TEST_UGC_ID");
+            assert_mobile_headers(&request);
+        });
+    }
+
+    #[test]
+    fn capture_urls_request_uses_signed_url_endpoint() {
+        with_test_now(fixed_now(), || {
+            let request =
+                get_cloud_media_capture_urls(&Client::new(), test_access_token(), "TEST_UGC_ID")
+                    .build()
+                    .expect("request should build");
+
+            assert_eq!(
+                request.url().path(),
+                "/api/gameMediaService/v2/c2s/ugc/TEST_UGC_ID/url"
+            );
+            assert_mobile_headers(&request);
+        });
+    }
+}

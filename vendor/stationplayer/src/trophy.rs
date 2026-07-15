@@ -687,3 +687,300 @@ where
         None => Ok(None),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::get_access_token;
+    use crate::headers::with_test_now;
+    use chrono::{DateTime, Utc};
+    use reqwest::Method;
+
+    fn test_access_token() -> AccessToken {
+        get_access_token(r#"{"access_token":"TEST_ACCESS_TOKEN"}"#)
+            .expect("test access token should parse")
+    }
+
+    fn fixed_now() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-05-02T12:00:00Z")
+            .expect("valid test timestamp")
+            .with_timezone(&Utc)
+    }
+
+    fn header(request: &reqwest::Request, name: &str) -> String {
+        request
+            .headers()
+            .get(name)
+            .unwrap_or_else(|| panic!("missing header {name}"))
+            .to_str()
+            .expect("header should be utf-8")
+            .to_string()
+    }
+
+    fn query_value(request: &reqwest::Request, name: &str) -> String {
+        request
+            .url()
+            .query_pairs()
+            .find_map(|(key, value)| (key == name).then(|| value.into_owned()))
+            .unwrap_or_else(|| panic!("missing query parameter {name}"))
+    }
+
+    fn assert_mobile_headers(request: &reqwest::Request) {
+        assert_eq!(header(request, "authorization"), "Bearer TEST_ACCESS_TOKEN");
+        assert_eq!(header(request, "accept-language"), "en-US");
+        assert_eq!(header(request, "accept-encoding"), "gzip");
+        assert_eq!(
+            header(request, "user-agent"),
+            consts::DEFAULT_OKHTTP_USER_AGENT
+        );
+        assert_eq!(
+            header(request, "if-modified-since"),
+            "Sat, 2 May 2026 11:47:00 +0000"
+        );
+        assert_eq!(header(request, "x-psn-sampled"), "0");
+        assert_eq!(
+            header(request, "x-psn-app-ver"),
+            consts::DEFAULT_APP_VERSION
+        );
+        uuid::Uuid::parse_str(&header(request, "x-psn-request-id"))
+            .expect("request id should be a UUID");
+        assert_eq!(header(request, "x-psn-span-id").len(), 16);
+        assert_eq!(header(request, "x-psn-trace-id").len(), 16);
+    }
+
+    #[test]
+    fn trophy_summary_request_is_exact_except_random_trace_values() {
+        with_test_now(fixed_now(), || {
+            let request =
+                get_trophy_summary(&Client::new(), "TEST_ACCOUNT_ID", test_access_token())
+                    .build()
+                    .expect("request should build");
+
+            assert_eq!(request.method(), Method::GET);
+            assert_eq!(
+                request.url().as_str(),
+                "https://m.np.playstation.com/api/trophy/v1/users/TEST_ACCOUNT_ID/trophySummary"
+            );
+            assert_mobile_headers(&request);
+        });
+    }
+
+    #[test]
+    fn trophy_titles_request_includes_limit_and_offset() {
+        with_test_now(fixed_now(), || {
+            let request =
+                get_trophy_titles(&Client::new(), "TEST_ACCOUNT_ID", test_access_token(), 200)
+                    .build()
+                    .expect("request should build");
+
+            assert_eq!(request.method(), Method::GET);
+            assert_eq!(
+                request.url().path(),
+                "/api/trophy/v1/users/TEST_ACCOUNT_ID/trophyTitles"
+            );
+            assert_eq!(query_value(&request, "limit"), "100");
+            assert_eq!(query_value(&request, "offset"), "200");
+            assert_mobile_headers(&request);
+        });
+    }
+
+    #[test]
+    fn title_lookup_request_joins_title_ids_without_pii() {
+        with_test_now(fixed_now(), || {
+            let title_ids = vec!["TEST_TITLE_A".to_string(), "TEST_TITLE_B".to_string()];
+            let request = get_trophy_titles_include_not_earned(
+                &Client::new(),
+                "TEST_ACCOUNT_ID",
+                test_access_token(),
+                &title_ids,
+            )
+            .build()
+            .expect("request should build");
+
+            assert_eq!(
+                request.url().path(),
+                "/api/trophy/v1/users/TEST_ACCOUNT_ID/titles/trophyTitles"
+            );
+            assert_eq!(query_value(&request, "includeNotEarnedTrophyIds"), "true");
+            assert_eq!(
+                query_value(&request, "npTitleIds"),
+                "TEST_TITLE_A,TEST_TITLE_B"
+            );
+            assert_mobile_headers(&request);
+        });
+    }
+
+    #[test]
+    fn trophy_group_requests_default_and_custom_np_service_name() {
+        with_test_now(fixed_now(), || {
+            let default_request = get_trophy_groups(
+                &Client::new(),
+                "TEST_ACCOUNT_ID",
+                test_access_token(),
+                "TEST_NP_COMM_ID",
+                None,
+            )
+            .build()
+            .expect("request should build");
+            assert_eq!(
+                default_request.url().path(),
+                "/api/trophy/v1/users/TEST_ACCOUNT_ID/npCommunicationIds/TEST_NP_COMM_ID/trophyGroups"
+            );
+            assert_eq!(query_value(&default_request, "npServiceName"), "trophy");
+
+            let custom_request = get_trophy_group_trophies(
+                &Client::new(),
+                "TEST_ACCOUNT_ID",
+                test_access_token(),
+                "TEST_NP_COMM_ID",
+                "default",
+                Some("concepts"),
+            )
+            .build()
+            .expect("request should build");
+            assert_eq!(
+                custom_request.url().path(),
+                "/api/trophy/v1/users/TEST_ACCOUNT_ID/npCommunicationIds/TEST_NP_COMM_ID/trophyGroups/default/trophies"
+            );
+            assert_eq!(query_value(&custom_request, "npServiceName"), "concepts");
+            assert_mobile_headers(&custom_request);
+        });
+    }
+
+    #[test]
+    fn defined_trophy_endpoints_do_not_include_account_id() {
+        with_test_now(fixed_now(), || {
+            let group_request = get_defined_trophy_group_trophies(
+                &Client::new(),
+                test_access_token(),
+                "TEST_NP_COMM_ID",
+                "default",
+                Some("trophy2"),
+            )
+            .build()
+            .expect("request should build");
+            assert_eq!(
+                group_request.url().path(),
+                "/api/trophy/v1/npCommunicationIds/TEST_NP_COMM_ID/trophyGroups/default/trophies"
+            );
+            assert_eq!(query_value(&group_request, "npServiceName"), "trophy2");
+
+            let detail_request = get_defined_trophy_detail(
+                &Client::new(),
+                test_access_token(),
+                "TEST_NP_COMM_ID",
+                "42",
+                None,
+            )
+            .build()
+            .expect("request should build");
+            assert_eq!(
+                detail_request.url().path(),
+                "/api/trophy/v1/npCommunicationIds/TEST_NP_COMM_ID/trophies/42"
+            );
+            assert_eq!(query_value(&detail_request, "npServiceName"), "trophy");
+        });
+    }
+
+    #[test]
+    fn trophy_detail_and_appearance_requests_have_expected_paths() {
+        with_test_now(fixed_now(), || {
+            let detail_request = get_trophy_detail(
+                &Client::new(),
+                "TEST_ACCOUNT_ID",
+                test_access_token(),
+                "TEST_NP_COMM_ID",
+                "7",
+                Some("trophy"),
+            )
+            .build()
+            .expect("request should build");
+            assert_eq!(
+                detail_request.url().path(),
+                "/api/trophy/v1/users/TEST_ACCOUNT_ID/npCommunicationIds/TEST_NP_COMM_ID/trophies/7"
+            );
+            assert_eq!(query_value(&detail_request, "npServiceName"), "trophy");
+
+            let appearance_request = get_trophy_appearance_setting(
+                &Client::new(),
+                test_access_token(),
+                "TEST_NP_COMM_ID",
+                Some("trophy2"),
+            )
+            .build()
+            .expect("request should build");
+            assert_eq!(
+                appearance_request.url().path(),
+                "/api/trophy/v1/users/me/npCommunicationIds/TEST_NP_COMM_ID/appearanceSetting"
+            );
+            assert_eq!(query_value(&appearance_request, "npServiceName"), "trophy2");
+        });
+    }
+
+    #[test]
+    fn hint_availability_graphql_request_uses_persisted_query_and_correlation_id() {
+        let trophy_ids = vec!["1".to_string(), "2".to_string()];
+        let request = get_hint_availability(
+            &Client::new(),
+            test_access_token(),
+            "TEST_CORRELATION_ID",
+            "TEST_NP_COMM_ID",
+            &trophy_ids,
+        )
+        .build()
+        .expect("request should build");
+
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(
+            request.url().as_str().split('?').next().unwrap(),
+            consts::DEFAULT_GRAPHQL_BASE_URL
+        );
+        assert_eq!(
+            header(&request, "x-psn-correlation-id"),
+            "TEST_CORRELATION_ID"
+        );
+        assert_eq!(
+            header(&request, "authorization"),
+            "Bearer TEST_ACCESS_TOKEN"
+        );
+        assert_eq!(header(&request, "disable_query_whitelist"), "false");
+        assert_eq!(
+            query_value(&request, "operationName"),
+            "metGetHintAvailability"
+        );
+
+        let variables: serde_json::Value =
+            serde_json::from_str(&query_value(&request, "variables"))
+                .expect("variables should decode as JSON");
+        assert_eq!(variables["npCommId"], "TEST_NP_COMM_ID");
+        assert_eq!(variables["trophyIds"], serde_json::json!(["1", "2"]));
+
+        let extensions: serde_json::Value =
+            serde_json::from_str(&query_value(&request, "extensions"))
+                .expect("extensions should decode as JSON");
+        assert_eq!(extensions["persistedQuery"]["version"], 1);
+        assert_eq!(
+            extensions["persistedQuery"]["sha256Hash"],
+            MET_GET_HINT_AVAILABILITY_SHA256
+        );
+    }
+
+    #[test]
+    fn trophy_id_and_progress_deserializers_accept_numbers_and_strings() {
+        let trophy: Trophy = serde_json::from_value(serde_json::json!({
+            "trophyId": 42,
+            "progress": 7
+        }))
+        .expect("numeric primitives should deserialize");
+        assert_eq!(trophy.trophy_id, "42");
+        assert_eq!(trophy.progress.as_deref(), Some("7"));
+
+        let trophy: Trophy = serde_json::from_value(serde_json::json!({
+            "trophyId": "43",
+            "progress": "8"
+        }))
+        .expect("string primitives should deserialize");
+        assert_eq!(trophy.trophy_id, "43");
+        assert_eq!(trophy.progress.as_deref(), Some("8"));
+    }
+}

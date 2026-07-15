@@ -92,3 +92,132 @@ pub(crate) fn get_account_info(client: &Client, access_token: AccessToken) -> Re
         .header("Connection", "Keep-Alive")
         .header("If-Modified-Since", get_modified_since())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::headers::with_test_now;
+    use chrono::{DateTime, Utc};
+    use reqwest::Method;
+
+    const TEST_ACCESS_TOKEN_JSON: &str = r#"{"access_token":"TEST_ACCESS_TOKEN"}"#;
+
+    fn test_access_token() -> AccessToken {
+        get_access_token(TEST_ACCESS_TOKEN_JSON).expect("test access token should parse")
+    }
+
+    fn header(request: &reqwest::Request, name: &str) -> String {
+        request
+            .headers()
+            .get(name)
+            .unwrap_or_else(|| panic!("missing header {name}"))
+            .to_str()
+            .expect("header should be utf-8")
+            .to_string()
+    }
+
+    fn fixed_now() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-05-02T12:00:00Z")
+            .expect("valid test timestamp")
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn sign_in_url_contains_expected_oauth_params_without_pii() {
+        let url = Url::parse(&generate_sign_in_url(Some("testapp://redirect")))
+            .expect("sign-in URL should parse");
+        let params = url
+            .query_pairs()
+            .collect::<std::collections::HashMap<_, _>>();
+
+        assert_eq!(
+            url.as_str().split('?').next().unwrap(),
+            consts::DEFAULT_AUTHORIZE_BASE_URL
+        );
+        assert_eq!(
+            params.get("client_id").map(|value| value.as_ref()),
+            Some(consts::DEFAULT_CLIENT_ID)
+        );
+        assert_eq!(
+            params.get("redirect_uri").map(|value| value.as_ref()),
+            Some("testapp://redirect")
+        );
+        assert_eq!(
+            params.get("response_type").map(|value| value.as_ref()),
+            Some("code")
+        );
+        assert_eq!(
+            params.get("scope").map(|value| value.as_ref()),
+            Some(consts::DEFAULT_SCOPE)
+        );
+        assert_eq!(
+            params.get("service_entity").map(|value| value.as_ref()),
+            Some(consts::DEFAULT_SERVICE_ENTITY)
+        );
+        assert_eq!(
+            params.get("prompt").map(|value| value.as_ref()),
+            Some("login")
+        );
+    }
+
+    #[test]
+    fn auth_token_request_contains_required_method_headers_and_body() {
+        let client = Client::new();
+        let request = get_auth_token(&client, "TEST_NPSSO")
+            .build()
+            .expect("request should build");
+        let body = std::str::from_utf8(
+            request
+                .body()
+                .and_then(|body| body.as_bytes())
+                .expect("request should have an in-memory body"),
+        )
+        .expect("body should be utf-8");
+
+        assert_eq!(request.method(), Method::POST);
+        assert_eq!(request.url().as_str(), consts::DEFAULT_TOKEN_URL);
+        assert_eq!(
+            header(&request, "User-Agent"),
+            consts::DEFAULT_AUTH_USER_AGENT
+        );
+        assert_eq!(
+            header(&request, "Content-Type"),
+            "application/x-www-form-urlencoded"
+        );
+        assert_eq!(header(&request, "Accept-Encoding"), "gzip");
+        assert_eq!(header(&request, "Connection"), "Keep-Alive");
+        assert!(header(&request, "Authorization").starts_with("Basic "));
+        assert!(body.contains("grant_type=sso_token"));
+        assert!(body.contains("npsso=TEST_NPSSO"));
+        assert!(body.contains("token_format=jwt"));
+        assert!(body.contains("scope=psn%3Amobile.v2.core+psn%3Aclientapp"));
+        assert!(body.contains("service_entity=urn%3Aservice-entity%3Apsn"));
+    }
+
+    #[test]
+    fn account_info_request_uses_bearer_auth_and_mocked_timestamp() {
+        with_test_now(fixed_now(), || {
+            let client = Client::new();
+            let request = get_account_info(&client, test_access_token())
+                .build()
+                .expect("request should build");
+
+            assert_eq!(request.method(), Method::GET);
+            assert_eq!(request.url().as_str(), consts::DEFAULT_DMS_URL);
+            assert_eq!(
+                header(&request, "authorization"),
+                "Bearer TEST_ACCESS_TOKEN"
+            );
+            assert_eq!(
+                header(&request, "User-Agent"),
+                consts::DEFAULT_OKHTTP_USER_AGENT
+            );
+            assert_eq!(header(&request, "Accept-Encoding"), "gzip");
+            assert_eq!(header(&request, "Connection"), "Keep-Alive");
+            assert_eq!(
+                header(&request, "If-Modified-Since"),
+                "Sat, 2 May 2026 11:47:00 +0000"
+            );
+        });
+    }
+}

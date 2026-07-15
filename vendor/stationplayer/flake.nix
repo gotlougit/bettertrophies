@@ -42,6 +42,9 @@
               pkgs.rust-analyzer
               pkgs.tree-sitter
               pkgs.gdb
+              pkgs.uv
+              pkgs.python3
+              pkgs.jadx
             ]
             ++ pkgs.lib.optionals (pkgs.stdenv.isLinux && pkgs.stdenv.isx86_64) [ pkgs.cargo-rr ];
           };
