@@ -106,6 +106,32 @@ tasks:
       echo "=== Signed release APK(s) ==="
       find app/build/outputs/apk/release/ -name '*.apk' -exec ls -lh {} \;
 
+  - commit-apk: |
+      set -eux
+      . ~/.buildenv
+
+      cd ~/bettertrophies
+
+      # Builds run in detached HEAD, so first switch to the main branch.
+      # -B creates the branch if it doesn't exist; -f forces a reset so we
+      # match origin/main exactly (handles the case where the build VM only
+      # checked out a single commit).
+      git fetch origin main
+      git checkout -B main origin/main
+
+      # Create releases directory and copy the APK(s) into it.
+      mkdir -p releases
+      find app/build/outputs/apk/release/ -name '*.apk' -exec cp -v {} releases/ \;
+
+      # Configure git for the commit.
+      git config user.name "BetterTrophies CI"
+      git config user.email "ci@gotlou.com"
+
+      # Commit and push.  The [skip ci] trailer prevents this very pipeline
+      # from being re-triggered by the push.
+      git commit -m "build: update release APK [skip ci]"
+      git push origin main
+
 triggers:
   - action: email
     condition: always
