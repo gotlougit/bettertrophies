@@ -92,6 +92,18 @@ android {
     compileSdk = 36
     buildToolsVersion = "37.0.0"
 
+    signingConfigs {
+        create("release") {
+            val keystoreDir = File(System.getProperty("user.home"), ".keystore")
+            if (keystoreDir.resolve("release.jks").exists()) {
+                storeFile = keystoreDir.resolve("release.jks")
+                storePassword = keystoreDir.resolve("store_password").readText().trim()
+                keyAlias = keystoreDir.resolve("key_alias").readText().trim()
+                keyPassword = keystoreDir.resolve("key_password").readText().trim()
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "dev.gotlou.bettertrophies"
         minSdk = 28
@@ -107,6 +119,7 @@ android {
 
     buildTypes {
         release {
+            signingConfig = signingConfigs["release"]
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

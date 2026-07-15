@@ -1,0 +1,112 @@
+image: ubuntu/noble
+packages:
+  - openjdk-17-jdk-headless
+  - build-essential
+  - curl
+  - unzip
+  - python3
+  - git
+  - openssh-client
+
+secrets:
+  # SSH key that has access to the stationplayer private repo
+  - 11b91430-0b4c-439c-b385-c92968d68b1b
+  # key_alias
+  - 179ad65b-7138-499a-9441-426115aa38c2
+  # store_password
+  - 0045b695-9179-4114-9626-530eb8e8ac3f
+  # release.jks
+  - 7d8ca05f-c765-40cd-9a17-c03b0cb8454d
+  # key_password
+  - dbc59709-5833-4808-b2b4-00b1a4d8a823
+
+sources:
+  - git@git.sr.ht:~gotlou/stationplayer
+
+environment:
+  GIT_SSH_COMMAND: ssh -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes
+  STATIONPLAYER_REGENERATE_CONSTS: 0
+  ANDROID_HOME: /home/build/android-sdk
+  ANDROID_SDK_ROOT: /home/build/android-sdk
+  JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+  ANDROID_NDK_HOME: /home/build/android-sdk/ndk/27.2.12479018
+  # Tell cargo-ndk where the NDK lives (belt-and-suspenders with ANDROID_NDK_HOME).
+  NDK_HOME: /home/build/android-sdk/ndk/27.2.12479018
+
+tasks:
+  - setup-rust: |
+      set -eux
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+      # Persist cargo in PATH for all subsequent tasks.
+      echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.buildenv
+
+  - setup-android-sdk: |
+      set -eux
+      . ~/.buildenv
+
+      # Install Rust Android cross-compilation targets + cargo-ndk.
+      rustup target add aarch64-linux-android x86_64-linux-android
+      cargo install cargo-ndk
+
+      # Download Android command-line tools.
+      #
+      # NOTE: This URL is pinned to a known-good version.  If the build starts
+      # failing with a 404, grab the latest URL from:
+      #   https://developer.android.com/studio#command-line-tools-only
+      mkdir -p "$ANDROID_HOME/cmdline-tools"
+      cd "$ANDROID_HOME/cmdline-tools"
+      curl -L -o cmdline-tools.zip \
+        https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
+      unzip -q cmdline-tools.zip
+      mv cmdline-tools latest
+      rm cmdline-tools.zip
+
+      # Accept licenses and install the SDK packages we need.
+      yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses
+      "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+        "platform-tools" \
+        "platforms;android-36" \
+        "build-tools;37.0.0" \
+        "ndk;27.2.12479018"
+
+  - cargo-fetch: |
+      set -eux
+      . ~/.buildenv
+
+      cd ~/bettertrophies/vendor/stationplayer
+
+      # Fetch crate dependencies so that subsequent 'cargo metadata --offline'
+      # (invoked by settings.gradle.kts) can succeed without a network call.
+      cargo fetch
+
+  - build-apk: |
+      set -eux
+      . ~/.buildenv
+
+      cd ~/bettertrophies
+
+      # Ensure the NDK is visible to both cargo-ndk and the Gradle Rust tasks.
+      export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018"
+      export NDK_HOME="$ANDROID_NDK_HOME"
+
+      # gradlew may lose the execute bit during clone.
+      chmod +x gradlew
+
+      # Clean up any host-compiler leakage that would confuse cargo-ndk.
+      unset CC CXX AR AS LD RANLIB STRIP \
+            CC_FOR_BUILD CXX_FOR_BUILD AR_FOR_BUILD AS_FOR_BUILD \
+            LD_FOR_BUILD RANLIB_FOR_BUILD STRIP_FOR_BUILD \
+            CFLAGS CXXFLAGS LDFLAGS
+
+      # Build the signed release APK.
+      # The signing config in app/build.gradle.kts automatically picks up the
+      # keystore from ~/.keystore/ when it exists.
+      ./gradlew assembleRelease
+
+      echo "=== Signed release APK(s) ==="
+      find app/build/outputs/apk/release/ -name '*.apk' -exec ls -lh {} \;
+
+triggers:
+  - action: email
+    condition: always
+    to: Saksham Mittal <git@gotlou.com>
